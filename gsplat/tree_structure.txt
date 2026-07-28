@@ -1,0 +1,369 @@
+.
+├── .clang-format
+├── .clangd_template
+├── .github
+│   └── workflows
+│       ├── building.yml
+│       ├── core_tests.yml
+│       ├── cuda
+│       │   ├── Linux-env.sh
+│       │   ├── Linux.sh
+│       │   ├── Windows-env.sh
+│       │   └── Windows.sh
+│       ├── doc.yml
+│       ├── generate_simple_index_pages.py
+│       ├── generate_simple_index_pages.yml
+│       └── publish.yml
+├── .gitignore
+├── .gitmodules
+├── CITATION.bib
+├── EXPLORATION.md
+├── LICENSE
+├── MANIFEST.in
+├── README.md
+├── assets
+│   └── test_garden.npz
+├── docs
+│   ├── 3dgut.md
+│   ├── DEV.md
+│   ├── INSTALL_WIN.md
+│   ├── Makefile
+│   ├── batch.md
+│   ├── requirements.txt
+│   └── source
+│       ├── _templates
+│       │   └── sidebar
+│       │       └── brand.html
+│       ├── apis
+│       │   ├── compression.rst
+│       │   ├── rasterization.rst
+│       │   ├── strategy.rst
+│       │   └── utils.rst
+│       ├── assets
+│       │   ├── square.gif
+│       │   ├── training.gif
+│       │   └── viewer_garden_480p.mp4
+│       ├── conf.py
+│       ├── conventions
+│       │   └── data_conventions.rst
+│       ├── examples
+│       │   ├── colmap.rst
+│       │   ├── image.rst
+│       │   ├── large_scale.rst
+│       │   └── ncore.rst
+│       ├── index.rst
+│       ├── migration
+│       │   ├── migration_inria.rst
+│       │   └── migration_legacy.rst
+│       ├── references.bib
+│       └── tests
+│           ├── eval.rst
+│           ├── profile.rst
+│           └── tests.rst
+├── examples
+│   ├── AV_TRAINER.md
+│   ├── av_trainer.py
+│   ├── benchmarks
+│   │   ├── 3dgut
+│   │   │   ├── mcmc.sh
+│   │   │   └── mcmc_zipnerf.sh
+│   │   ├── basic.sh
+│   │   ├── basic_2dgs.sh
+│   │   ├── basic_4gpus.sh
+│   │   ├── bilarf
+│   │   │   └── mcmc_bilarf.sh
+│   │   ├── compression
+│   │   │   ├── mcmc.sh
+│   │   │   ├── mcmc_tt.sh
+│   │   │   ├── results
+│   │   │   │   ├── MipNeRF360.csv
+│   │   │   │   └── TanksAndTemples.csv
+│   │   │   └── summarize_stats.py
+│   │   ├── fisheye
+│   │   │   ├── mcmc_zipnerf.sh
+│   │   │   └── mcmc_zipnerf_undistorted.sh
+│   │   ├── gaussian_render_inference_scene
+│   │   │   ├── README.md
+│   │   │   └── gaussian_render_inference_scene_bench.py
+│   │   ├── mcmc.sh
+│   │   └── mcmc_4gpus.sh
+│   ├── datasets
+│   │   ├── __init__.py
+│   │   ├── colmap.py
+│   │   ├── download_dataset.py
+│   │   ├── ncore.py
+│   │   ├── ncore_utils.py
+│   │   ├── normalize.py
+│   │   └── traj.py
+│   ├── download_ncore.py
+│   ├── exif.py
+│   ├── gsplat_viewer.py
+│   ├── gsplat_viewer_2dgs.py
+│   ├── image_fitting.py
+│   ├── lib_bilagrid.py
+│   ├── prepare_pandaset.py
+│   ├── requirements.txt
+│   ├── sample_inference.py
+│   ├── simple_trainer.py
+│   ├── simple_trainer_2dgs.py
+│   ├── simple_viewer.py
+│   ├── simple_viewer_2dgs.py
+│   ├── simple_viewer_3dgut.py
+│   └── utils.py
+├── experimental
+│   ├── __init__.py
+│   └── render
+│       ├── __init__.py
+│       ├── _common.py
+│       ├── components
+│       │   ├── __init__.py
+│       │   ├── gaussian_inference_renderer.py
+│       │   └── test_gaussian_inference_renderer.py
+│       ├── functional
+│       │   ├── __init__.py
+│       │   ├── gaussian_inference.py
+│       │   ├── render_scene.py
+│       │   ├── test_gaussian_inference.py
+│       │   └── test_render_scene.py
+│       ├── kernels
+│       │   ├── __init__.py
+│       │   ├── _backend.py
+│       │   ├── cuda
+│       │   │   ├── __init__.py
+│       │   │   ├── build.py
+│       │   │   ├── csrc
+│       │   │   │   └── gaussian_inference
+│       │   │   │       ├── Constants.h
+│       │   │   │       ├── GaussianRenderInferenceScene.cu
+│       │   │   │       ├── GaussianRenderInferenceScene.h
+│       │   │   │       ├── InferenceTypes.h
+│       │   │   │       ├── IntersectCommon.cu
+│       │   │   │       ├── IntersectCommon.h
+│       │   │   │       ├── IntersectMTConfig.h
+│       │   │   │       ├── IntersectMTFused.cu
+│       │   │   │       ├── IntersectMTFused.h
+│       │   │   │       ├── MacroTileIntersect.cu
+│       │   │   │       ├── MacroTileIntersect.h
+│       │   │   │       ├── MacroTileRasterize.cu
+│       │   │   │       ├── MacroTileRasterize.h
+│       │   │   │       ├── Projection.cu
+│       │   │   │       ├── Projection.h
+│       │   │   │       ├── SHCommon.h
+│       │   │   │       ├── SHCompression.cu
+│       │   │   │       ├── SHCompression.h
+│       │   │   │       ├── SegmentedSort.cu
+│       │   │   │       ├── SegmentedSort.h
+│       │   │   │       ├── SphericalHarmonics.cu
+│       │   │   │       ├── SphericalHarmonics.h
+│       │   │   │       └── Utils.h
+│       │   │   └── ext.cpp
+│       │   ├── gaussian_inference_ops.py
+│       │   └── test_gaussian_render_inference_only_op.py
+│       ├── test_gaussian_inference_integration.py
+│       └── types.py
+├── formatter.sh
+├── gsplat
+│   ├── __init__.py
+│   ├── _helper.py
+│   ├── color_correct.py
+│   ├── compression
+│   │   ├── __init__.py
+│   │   ├── png_compression.py
+│   │   └── sort.py
+│   ├── cuda
+│   │   ├── __init__.py
+│   │   ├── _backend.py
+│   │   ├── _constants.py
+│   │   ├── _lidar.py
+│   │   ├── _losses_wrapper.py
+│   │   ├── _math.py
+│   │   ├── _torch_cameras.py
+│   │   ├── _torch_external_distortion.py
+│   │   ├── _torch_impl.py
+│   │   ├── _torch_impl_2dgs.py
+│   │   ├── _torch_impl_eval3d.py
+│   │   ├── _torch_impl_lidar.py
+│   │   ├── _torch_impl_ut.py
+│   │   ├── _torch_lidars.py
+│   │   ├── _wrapper.py
+│   │   ├── build.py
+│   │   ├── csrc
+│   │   │   ├── Adam.cpp
+│   │   │   ├── Adam.h
+│   │   │   ├── AdamCUDA.cu
+│   │   │   ├── CameraWrappers.cu
+│   │   │   ├── Config.h
+│   │   │   ├── ExternalDistortionWrappers.cu
+│   │   │   ├── GaussianLosses.cpp
+│   │   │   ├── GaussianLosses.h
+│   │   │   ├── GaussianLossesCUDA.cu
+│   │   │   ├── Intersect.cpp
+│   │   │   ├── Intersect.h
+│   │   │   ├── IntersectTile.cu
+│   │   │   ├── IntersectTileLidar.cu
+│   │   │   ├── Lidar.cpp
+│   │   │   ├── MCMCPerturb.cpp
+│   │   │   ├── MCMCPerturb.h
+│   │   │   ├── MCMCPerturbCUDA.cu
+│   │   │   ├── MacroUtils.h
+│   │   │   ├── Null.cpp
+│   │   │   ├── Null.h
+│   │   │   ├── NullCUDA.cu
+│   │   │   ├── Projection.cpp
+│   │   │   ├── Projection.h
+│   │   │   ├── Projection2DGS.cuh
+│   │   │   ├── Projection2DGSFused.cu
+│   │   │   ├── Projection2DGSPacked.cu
+│   │   │   ├── ProjectionEWA3DGSFused.cu
+│   │   │   ├── ProjectionEWA3DGSPacked.cu
+│   │   │   ├── ProjectionEWASimple.cu
+│   │   │   ├── ProjectionUT3DGSFused.cu
+│   │   │   ├── QuatScaleToCovar.cpp
+│   │   │   ├── QuatScaleToCovar.h
+│   │   │   ├── QuatScaleToCovarCUDA.cu
+│   │   │   ├── Rasterization.cpp
+│   │   │   ├── Rasterization.h
+│   │   │   ├── RasterizeToIndices2DGS.cu
+│   │   │   ├── RasterizeToIndices3DGS.cu
+│   │   │   ├── RasterizeToPixels2DGSBwd.cu
+│   │   │   ├── RasterizeToPixels2DGSFwd.cu
+│   │   │   ├── RasterizeToPixels3DGSBwd.cu
+│   │   │   ├── RasterizeToPixels3DGSFwd.cu
+│   │   │   ├── RasterizeToPixelsFromWorld3DGSBwd.cu
+│   │   │   ├── RasterizeToPixelsFromWorld3DGSFwd.cu
+│   │   │   ├── Relocation.cpp
+│   │   │   ├── Relocation.h
+│   │   │   ├── RelocationCUDA.cu
+│   │   │   ├── SphericalHarmonics.cpp
+│   │   │   ├── SphericalHarmonics.h
+│   │   │   ├── SphericalHarmonicsCUDA.cu
+│   │   │   ├── TensorView.h
+│   │   │   └── third_party
+│   │   │       └── glm
+│   │   ├── ext.cpp
+│   │   └── include
+│   │       ├── CameraWrappers.h
+│   │       ├── Cameras.cuh
+│   │       ├── Cameras.h
+│   │       ├── Common.h
+│   │       ├── ExternalDistortion.cuh
+│   │       ├── ExternalDistortion.h
+│   │       ├── ExternalDistortionWrappers.h
+│   │       ├── Lidars.cuh
+│   │       ├── Lidars.h
+│   │       ├── Ops.h
+│   │       └── Utils.cuh
+│   ├── distributed.py
+│   ├── exporter.py
+│   ├── losses.py
+│   ├── losses_fused.py
+│   ├── optimizers
+│   │   ├── __init__.py
+│   │   └── selective_adam.py
+│   ├── profile.py
+│   ├── relocation.py
+│   ├── rendering.py
+│   ├── strategy
+│   │   ├── __init__.py
+│   │   ├── base.py
+│   │   ├── default.py
+│   │   ├── mcmc.py
+│   │   └── ops.py
+│   ├── utils.py
+│   └── version.py
+├── libs
+│   ├── README.md
+│   ├── design.md
+│   ├── geometry
+│   │   ├── __init__.py
+│   │   ├── design.md
+│   │   ├── functional
+│   │   │   ├── __init__.py
+│   │   │   ├── pose.py
+│   │   │   ├── quaternion.py
+│   │   │   ├── test_pose.py
+│   │   │   └── test_quaternion.py
+│   │   ├── kernels
+│   │   │   ├── __init__.py
+│   │   │   ├── _backend.py
+│   │   │   ├── cuda
+│   │   │   │   ├── __init__.py
+│   │   │   │   ├── build.py
+│   │   │   │   ├── csrc
+│   │   │   │   │   ├── pose.cu
+│   │   │   │   │   ├── pose.cuh
+│   │   │   │   │   ├── quaternion.cu
+│   │   │   │   │   └── quaternion.cuh
+│   │   │   │   └── ext.cpp
+│   │   │   ├── pose_ops.py
+│   │   │   └── quaternion_ops.py
+│   │   └── pyproject.toml
+│   ├── install.sh
+│   ├── scene
+│   │   ├── __init__.py
+│   │   ├── components
+│   │   │   ├── __init__.py
+│   │   │   ├── base.py
+│   │   │   ├── gaussian_inference_scene.py
+│   │   │   ├── gaussian_scene.py
+│   │   │   ├── test_gaussian_inference_scene.py
+│   │   │   └── test_gaussian_scene.py
+│   │   ├── design.md
+│   │   ├── functional
+│   │   │   ├── __init__.py
+│   │   │   ├── gaussian_inference.py
+│   │   │   └── test_gaussian_inference.py
+│   │   ├── kernels
+│   │   │   ├── __init__.py
+│   │   │   ├── _backend.py
+│   │   │   ├── cuda
+│   │   │   │   ├── __init__.py
+│   │   │   │   ├── build.py
+│   │   │   │   ├── csrc
+│   │   │   │   │   ├── gaussian_scene_pack.cpp
+│   │   │   │   │   └── gaussian_scene_pack.cuh
+│   │   │   │   └── ext.cpp
+│   │   │   └── gaussian_inference_ops.py
+│   │   ├── pyproject.toml
+│   │   ├── sh_compression.py
+│   │   └── test_package_imports.py
+│   ├── sensors
+│   │   ├── design.md
+│   │   └── implementation_plan.md
+│   └── stage
+│       ├── __init__.py
+│       ├── components
+│       │   ├── __init__.py
+│       │   ├── stage.py
+│       │   └── test_stage.py
+│       ├── design.md
+│       └── pyproject.toml
+├── profiling
+│   ├── batch.py
+│   └── main.py
+├── pyproject.toml
+├── pytest.ini
+├── setup.py
+├── tests
+│   ├── __init__.py
+│   ├── _test_distributed.py
+│   ├── av_helpers.py
+│   ├── conftest.py
+│   ├── test_2dgs.py
+│   ├── test_2dgs_scene_integration.py
+│   ├── test_av_example.py
+│   ├── test_av_scene_wrapper.py
+│   ├── test_basic.py
+│   ├── test_cameras.py
+│   ├── test_compression.py
+│   ├── test_external_distortion.py
+│   ├── test_ftheta.py
+│   ├── test_losses.py
+│   ├── test_losses_fused.py
+│   ├── test_math.py
+│   ├── test_mcmc_perturb.py
+│   ├── test_rasterization.py
+│   └── test_strategy.py
+└── tree_structure.txt
+
+57 directories, 309 files
