@@ -1,0 +1,20 @@
+{
+  "name": "remote-view-frontend",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "download-sample": "curl -L -o public/samples/bonsai.splat https://huggingface.co/datasets/dylanebert/3dgs/resolve/main/bonsai/bonsai-7k-mini.splat"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "typescript": "^5.8.3",
+    "vite": "^7.0.4"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

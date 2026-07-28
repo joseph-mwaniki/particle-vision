@@ -1,0 +1,11 @@
+# GPU worker runtime dependencies (integration layer only).
+# Full training dependencies are documented in docs/dependencies.md
+# and installed in the Docker image when training is implemented.
+
+# No external packages required for the placeholder HTTP handler.
+# Python 3.10+ standard library is sufficient for local development.
+
+# Future training dependencies (not installed yet):
+# torch==2.10.0
+# gsplat==1.5.3
+# See docs/dependencies.md for verified version matrix.
