@@ -1,3 +1,7 @@
+/// <reference lib="webworker" />
+
+export {};
+
 import createSortModule from "../../../wasm/sort.js";
 
 let wasmModule: any;

@@ -1,3 +1,8 @@
+
+/// <reference lib="webworker" />
+
+export {};
+
 import createDataModule from "../../../wasm/data.js";
 
 let wasmModule: any;

@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ES2022", "WebWorker"]
+  },
+  "include": [
+    "src/gsplat/renderers/webgl/utils/DataWorker.ts",
+    "src/gsplat/renderers/webgl/utils/SortWorker.ts"
+  ]
+}
