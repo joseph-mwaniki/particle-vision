@@ -79,6 +79,22 @@ def run_command(
         raise RuntimeError(f"Command failed ({result.returncode}): {cmd_str}\n{tail[-2000:]}")
 
 
+def download_file(url: str, dest_path: Path, on_log: Optional[LogFn] = None) -> Path:
+    """Download a file from an HTTP/HTTPS URL to dest_path."""
+    import urllib.request
+
+    ensure_dir(dest_path.parent)
+    if on_log:
+        on_log(f"Downloading input archive from {url}...")
+    logger.info("Downloading file from %s to %s", url, dest_path)
+
+    urllib.request.urlretrieve(url, str(dest_path))
+    if not dest_path.is_file() or dest_path.stat().st_size == 0:
+        raise RuntimeError(f"Failed to download or empty file from {url}")
+    return dest_path
+
+
 def find_latest_file(directory: Path, pattern: str) -> Optional[Path]:
     matches = sorted(directory.rglob(pattern), key=lambda p: p.stat().st_mtime, reverse=True)
     return matches[0] if matches else None
+

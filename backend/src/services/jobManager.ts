@@ -32,15 +32,18 @@ export async function startTrainingJob(jobId: string, uploadsDir: string): Promi
   });
 
   const callbackUrl = `${BACKEND_PUBLIC_URL}/internal/worker/callback`;
-  const imagesPath = path.isAbsolute(job.imagesPath)
-    ? job.imagesPath
-    : path.join(uploadsDir, path.basename(job.imagesPath));
+  const filename = path.basename(job.imagesPath);
+  const isRemoteBackend = BACKEND_PUBLIC_URL.startsWith("http://") || BACKEND_PUBLIC_URL.startsWith("https://");
+  const imagesPath = isRemoteBackend && !BACKEND_PUBLIC_URL.includes("localhost")
+    ? `${BACKEND_PUBLIC_URL}/uploads/${filename}`
+    : (path.isAbsolute(job.imagesPath) ? job.imagesPath : path.join(uploadsDir, filename));
 
   await dispatchTrainingJob({
     job_id: jobId,
     images_path: imagesPath,
     callback_url: callbackUrl,
   });
+
 }
 
 export async function handleWorkerCallback(

@@ -6,7 +6,16 @@ import traceback
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-from config import BACKEND_UPLOADS_DIR, STAGE_COLMAP, STAGE_COLLISION, STAGE_COMPLETED, STAGE_EXPORT, STAGE_GSPLAT, STAGE_QUEUED
+from config import (
+    BACKEND_UPLOADS_DIR,
+    STAGE_COLMAP,
+    STAGE_COLLISION,
+    STAGE_COMPLETED,
+    STAGE_EXPORT,
+    STAGE_GSPLAT,
+    STAGE_QUEUED,
+    WORK_DIR,
+)
 from pipeline import (
     convert_to_splat,
     generate_collision_mesh,
@@ -14,19 +23,26 @@ from pipeline import (
     train_gsplat,
     upload_results,
 )
+from pipeline.utils import download_file
 
 logger = logging.getLogger(__name__)
 
 CallbackFn = Callable[..., None]
 
 
-def _resolve_work_dir(job_id: str, images_path: str) -> tuple[Path, Path]:
-    """Resolve job workspace and uploaded ZIP path."""
-    zip_path = Path(images_path)
-    uploads_root = zip_path.parent
-    work_dir = uploads_root / "jobs" / job_id
+def _resolve_work_dir(job_id: str, images_path: str, on_log: Optional[CallbackFn] = None) -> tuple[Path, Path]:
+    """Resolve job workspace and uploaded ZIP path (downloading if URL)."""
+    work_dir = WORK_DIR / "jobs" / job_id
     work_dir.mkdir(parents=True, exist_ok=True)
+
+    if images_path.startswith("http://") or images_path.startswith("https://"):
+        zip_path = work_dir / "images.zip"
+        download_file(images_path, zip_path, on_log=on_log)
+    else:
+        zip_path = Path(images_path)
+
     return work_dir, zip_path
+
 
 
 def run_placeholder_pipeline(

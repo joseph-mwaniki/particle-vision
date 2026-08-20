@@ -108,6 +108,31 @@ app.post("/internal/worker/callback", async (req, res) => {
   }
 });
 
+// Internal: Remote GPU worker direct output upload
+const resultStorage = multer.diskStorage({
+  destination: (req, _file, cb) => {
+    const jobOutputDir = path.join(uploadsDir, "jobs", req.params.jobId, "output");
+    fs.mkdirSync(jobOutputDir, { recursive: true });
+    cb(null, jobOutputDir);
+  },
+  filename: (_req, file, cb) => {
+    cb(null, file.originalname);
+  },
+});
+const resultUpload = multer({ storage: resultStorage, limits: { fileSize: 500 * 1024 * 1024 } });
+
+app.post(
+  "/internal/worker/upload-result/:jobId",
+  resultUpload.fields([
+    { name: "splat", maxCount: 1 },
+    { name: "collision", maxCount: 1 },
+  ]),
+  (_req, res) => {
+    res.json({ success: true });
+  }
+);
+
+
 app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   if (err instanceof multer.MulterError) {
     return res.status(400).json({ error: err.message });
