@@ -4,12 +4,38 @@ import {
   uploadImages,
   startTraining,
   assetUrl,
+  listSplats,
+  getSplat,
+  createSplat,
+  updateSplat,
+  publishSplat,
+  deleteSplat,
   type Job,
+  type Splat,
 } from "./api";
 import { SplatViewer } from "./viewer/viewer";
 import { PipelineStepper, type JobStatus } from "./components/Stepper";
 
+// DOM Elements - Navigation & UI
+const appContainer = document.getElementById("app-container")!;
+const mainSidebar = document.getElementById("main-sidebar")!;
+const btnToggleSidebar = document.getElementById("btn-toggle-sidebar")!;
+const btnExpandSidebar = document.getElementById("btn-expand-sidebar")!;
 const apiStatusBadge = document.getElementById("api-status-badge")!;
+const tabSplats = document.getElementById("tab-splats")!;
+const tabTrain = document.getElementById("tab-train")!;
+const paneSplats = document.getElementById("pane-splats")!;
+const paneTrain = document.getElementById("pane-train")!;
+
+// DOM Elements - Splats Library
+const splatsList = document.getElementById("splats-list")!;
+const countAll = document.getElementById("count-all")!;
+const countPublished = document.getElementById("count-published")!;
+const countDraft = document.getElementById("count-draft")!;
+const filterPills = document.querySelectorAll(".filter-pills .pill");
+const btnNewSplatModal = document.getElementById("btn-new-splat-modal")!;
+
+// DOM Elements - Jobs & Upload Pipeline
 const dropZone = document.getElementById("drop-zone")!;
 const fileInput = document.getElementById("file-input") as HTMLInputElement;
 const uploadProgressContainer = document.getElementById("upload-progress-container")!;
@@ -17,8 +43,11 @@ const uploadProgressFill = document.getElementById("upload-progress-fill")!;
 const uploadProgressText = document.getElementById("upload-progress-text")!;
 const jobsList = document.getElementById("jobs-list")!;
 const logsConsole = document.getElementById("logs-console")!;
+
+// DOM Elements - Viewer & Actions
 const activeSceneTitle = document.getElementById("active-scene-title")!;
 const activeSceneId = document.getElementById("active-scene-id")!;
+const activeSceneBadge = document.getElementById("active-scene-badge")!;
 const canvas = document.getElementById("canvas") as HTMLCanvasElement;
 const viewerOverlay = document.getElementById("viewer-overlay")!;
 const viewerOverlayText = document.getElementById("viewer-overlay-text")!;
@@ -26,17 +55,66 @@ const viewerProgressIndicator = document.getElementById("viewer-progress-indicat
 const btnCapture = document.getElementById("btn-capture") as HTMLButtonElement;
 const btnLoadSample = document.getElementById("btn-load-sample") as HTMLButtonElement;
 const btnTrain = document.getElementById("btn-train") as HTMLButtonElement;
-const btnDeps = document.getElementById("btn-deps") as HTMLButtonElement;
-const depsModal = document.getElementById("deps-modal")!;
-const depsModalClose = document.getElementById("deps-modal-close")!;
-const depsContent = document.getElementById("deps-content")!;
+const btnSaveCamera = document.getElementById("btn-save-camera") as HTMLButtonElement;
+const btnShareModal = document.getElementById("btn-share-modal") as HTMLButtonElement;
+const btnClientMode = document.getElementById("btn-client-mode") as HTMLButtonElement;
 
+// DOM Elements - Showcase Client Banner
+const showcaseBanner = document.getElementById("showcase-banner")!;
+const showcaseBannerTitle = document.getElementById("showcase-banner-title")!;
+const showcaseBannerDesc = document.getElementById("showcase-banner-desc")!;
+const showcaseBannerStatus = document.getElementById("showcase-banner-status")!;
+const btnBannerPublish = document.getElementById("btn-banner-publish") as HTMLButtonElement;
+const btnBannerShare = document.getElementById("btn-banner-share") as HTMLButtonElement;
+const btnResetCam = document.getElementById("btn-reset-cam") as HTMLButtonElement;
+const btnFullscreen = document.getElementById("btn-fullscreen") as HTMLButtonElement;
+const btnExitClient = document.getElementById("btn-exit-client") as HTMLButtonElement;
+
+// DOM Elements - Share Modal
+const shareModal = document.getElementById("share-modal")!;
+const shareModalClose = document.getElementById("share-modal-close")!;
+const shareStatusBadge = document.getElementById("share-status-badge")!;
+const btnTogglePublishState = document.getElementById("btn-toggle-publish-state") as HTMLButtonElement;
+const sharePublicUrl = document.getElementById("share-public-url") as HTMLInputElement;
+const shareDraftUrl = document.getElementById("share-draft-url") as HTMLInputElement;
+const shareEmbedCode = document.getElementById("share-embed-code") as HTMLInputElement;
+const btnCopyPublicUrl = document.getElementById("btn-copy-public-url")!;
+const btnCopyDraftUrl = document.getElementById("btn-copy-draft-url")!;
+const btnCopyEmbedCode = document.getElementById("btn-copy-embed-code")!;
+
+// DOM Elements - Save Splat Modal
+const saveSplatModal = document.getElementById("save-splat-modal")!;
+const saveSplatClose = document.getElementById("save-splat-close")!;
+const formSaveSplat = document.getElementById("form-save-splat") as HTMLFormElement;
+const inputSplatTitle = document.getElementById("input-splat-title") as HTMLInputElement;
+const inputSplatDesc = document.getElementById("input-splat-desc") as HTMLTextAreaElement;
+const selectSplatStatus = document.getElementById("select-splat-status") as HTMLSelectElement;
+const btnCancelSaveSplat = document.getElementById("btn-cancel-save-splat")!;
+
+// DOM Elements - Settings Modal
+const settingsModal = document.getElementById("settings-modal")!;
+const settingsModalClose = document.getElementById("settings-modal-close")!;
+const btnApiSettings = document.getElementById("btn-api-settings")!;
+const inputApiKey = document.getElementById("input-api-key") as HTMLInputElement;
+const btnSaveSettings = document.getElementById("btn-save-settings")!;
+
+// App State
 const stepper = new PipelineStepper("pipeline-stepper");
-
 let activeJobId: string | null = null;
+let activeSplat: Splat | null = null;
+let currentSplats: Splat[] = [];
 let currentJobs: Job[] = [];
+let activeFilter = "all";
 let viewer: SplatViewer | null = null;
-let depsLoaded = false;
+let currentLoadedPath = "/samples/bonsai.splat";
+let isClientMode = false;
+let userApiKey = localStorage.getItem("pv_api_key") || "";
+
+if (inputApiKey && userApiKey) {
+  inputApiKey.value = userApiKey;
+}
+
+// ---------------- VIEWER INITIALIZATION ----------------
 
 function initViewer(): SplatViewer {
   if (!viewer) {
@@ -60,13 +138,7 @@ function initViewer(): SplatViewer {
   return viewer;
 }
 
-function updateStepper(job: Job | undefined): void {
-  if (!job || job.status === "PENDING") {
-    stepper.update("PENDING" as JobStatus, null);
-    return;
-  }
-  stepper.update(job.status as JobStatus, job.logs);
-}
+// ---------------- BACKEND HEALTH & DATA SYNC ----------------
 
 async function updateBackendStatus(): Promise<boolean> {
   const health = await checkHealth();
@@ -76,6 +148,15 @@ async function updateBackendStatus(): Promise<boolean> {
   }
   apiStatusBadge.innerHTML = `<span class="status-indicator offline"></span> Backend Offline`;
   return false;
+}
+
+async function loadSplatsData(): Promise<void> {
+  try {
+    currentSplats = await listSplats();
+    renderSplatsList();
+  } catch (err) {
+    console.error("Failed to load splats database:", err);
+  }
 }
 
 async function loadJobs(): Promise<void> {
@@ -93,6 +174,487 @@ async function loadJobs(): Promise<void> {
     console.error("Error loading jobs:", e);
   }
 }
+
+function updateStepper(job: Job | undefined): void {
+  if (!job || job.status === "PENDING") {
+    stepper.update("PENDING" as JobStatus, null);
+    return;
+  }
+  stepper.update(job.status as JobStatus, job.logs);
+}
+
+// ---------------- SPLAT DB RENDERING ----------------
+
+function renderSplatsList(): void {
+  const allCount = currentSplats.length;
+  const pubCount = currentSplats.filter((s) => s.status === "published").length;
+  const draftCount = currentSplats.filter((s) => s.status === "draft").length;
+
+  if (countAll) countAll.textContent = String(allCount);
+  if (countPublished) countPublished.textContent = String(pubCount);
+  if (countDraft) countDraft.textContent = String(draftCount);
+
+  let filtered = currentSplats;
+  if (activeFilter === "published") {
+    filtered = currentSplats.filter((s) => s.status === "published");
+  } else if (activeFilter === "draft") {
+    filtered = currentSplats.filter((s) => s.status === "draft");
+  }
+
+  if (filtered.length === 0) {
+    splatsList.innerHTML = `
+      <div class="no-jobs">
+        No ${activeFilter !== "all" ? activeFilter : ""} 3D scenes found in DB.
+      </div>
+    `;
+    return;
+  }
+
+  splatsList.innerHTML = filtered
+    .map((splat) => {
+      const isActive = activeSplat?.id === splat.id ? "active" : "";
+      const isPublished = splat.status === "published";
+      const statusClass = isPublished ? "badge-published" : "badge-draft";
+      const statusLabel = isPublished ? "Live Published" : "Draft";
+
+      return `
+        <div class="splat-card ${isActive}" data-id="${splat.id}">
+          <div class="splat-card-header">
+            <div class="splat-card-title">${escapeHtml(splat.title)}</div>
+            <span class="badge ${statusClass}">${statusLabel}</span>
+          </div>
+          ${splat.description ? `<p class="splat-card-desc">${escapeHtml(splat.description)}</p>` : ""}
+          <div class="splat-card-meta">
+            <span>👁️ ${splat.views || 0} views</span>
+            <span>${new Date(splat.updatedAt).toLocaleDateString()}</span>
+          </div>
+          <div class="splat-card-actions">
+            <button class="btn btn-sm btn-secondary btn-view-splat" data-splat-id="${splat.id}">View 3D</button>
+            <button class="btn btn-sm btn-secondary btn-share-splat" data-splat-id="${splat.id}">🔗 Share</button>
+            <button class="btn btn-sm ${isPublished ? "btn-secondary" : "btn-accent"} btn-toggle-publish" data-splat-id="${splat.id}">
+              ${isPublished ? "Unpublish" : "Publish"}
+            </button>
+            <button class="btn-danger-icon btn-delete-splat" data-splat-id="${splat.id}" title="Delete Splat">✕</button>
+          </div>
+        </div>
+      `;
+    })
+    .join("");
+
+  // Attach event listeners
+  document.querySelectorAll(".splat-card").forEach((card) => {
+    card.addEventListener("click", (e) => {
+      const target = e.target as HTMLElement;
+      if (target.tagName === "BUTTON") return;
+      const id = card.getAttribute("data-id")!;
+      selectSplatById(id);
+    });
+  });
+
+  document.querySelectorAll(".btn-view-splat").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const id = btn.getAttribute("data-splat-id")!;
+      selectSplatById(id);
+    });
+  });
+
+  document.querySelectorAll(".btn-share-splat").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const id = btn.getAttribute("data-splat-id")!;
+      const splat = currentSplats.find((s) => s.id === id);
+      if (splat) openShareModal(splat);
+    });
+  });
+
+  document.querySelectorAll(".btn-toggle-publish").forEach((btn) => {
+    btn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      const id = btn.getAttribute("data-splat-id")!;
+      const splat = currentSplats.find((s) => s.id === id);
+      if (!splat) return;
+
+      const nextStatus = splat.status === "published" ? "draft" : "published";
+      try {
+        btn.textContent = "Updating...";
+        await publishSplat(id, nextStatus);
+        await loadSplatsData();
+        if (activeSplat?.id === id) {
+          activeSplat.status = nextStatus;
+          updateActiveSceneHeader();
+        }
+      } catch (err: unknown) {
+        alert(err instanceof Error ? err.message : "Failed to update publish status");
+      }
+    });
+  });
+
+  document.querySelectorAll(".btn-delete-splat").forEach((btn) => {
+    btn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      const id = btn.getAttribute("data-splat-id")!;
+      if (!confirm("Are you sure you want to delete this splat from the database?")) return;
+
+      try {
+        await deleteSplat(id);
+        await loadSplatsData();
+      } catch (err: unknown) {
+        alert(err instanceof Error ? err.message : "Failed to delete splat");
+      }
+    });
+  });
+}
+
+function escapeHtml(str: string): string {
+  return str
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+// ---------------- SELECT & LOAD SPLAT SCENE ----------------
+
+async function selectSplatById(id: string): Promise<void> {
+  const splat = currentSplats.find((s) => s.id === id);
+  if (!splat) return;
+
+  activeSplat = splat;
+  activeJobId = null;
+  currentLoadedPath = splat.splatPath;
+
+  updateActiveSceneHeader();
+  renderSplatsList();
+
+  const v = initViewer();
+  await v.loadSplat(assetUrl(splat.splatPath));
+
+  if (splat.collisionPath) {
+    await v.loadCollisionMesh(assetUrl(splat.collisionPath));
+  }
+}
+
+function updateActiveSceneHeader(): void {
+  if (activeSplat) {
+    activeSceneTitle.textContent = activeSplat.title;
+    activeSceneId.textContent = `Slug: ${activeSplat.slug}`;
+    activeSceneBadge.style.display = "inline-flex";
+    activeSceneBadge.className = `badge ${activeSplat.status === "published" ? "badge-published" : "badge-draft"}`;
+    activeSceneBadge.textContent = activeSplat.status === "published" ? "Published" : "Draft";
+
+    // Update banner for client mode
+    showcaseBannerTitle.textContent = activeSplat.title;
+    showcaseBannerDesc.textContent = activeSplat.description || "Interactive 3D Gaussian Splatting showcase";
+    showcaseBannerStatus.className = `badge ${activeSplat.status === "published" ? "badge-published" : "badge-draft"}`;
+    showcaseBannerStatus.textContent = activeSplat.status === "published" ? "Published" : "Draft Preview";
+
+    if (activeSplat.status === "draft") {
+      btnBannerPublish.style.display = "inline-flex";
+    } else {
+      btnBannerPublish.style.display = "none";
+    }
+  } else if (activeJobId) {
+    activeSceneTitle.textContent = "Job Splat View";
+    activeSceneId.textContent = activeJobId;
+    activeSceneBadge.style.display = "none";
+  } else {
+    activeSceneTitle.textContent = "Sample Scene";
+    activeSceneId.textContent = "bonsai.splat";
+    activeSceneBadge.style.display = "inline-flex";
+    activeSceneBadge.className = "badge";
+    activeSceneBadge.textContent = "Sample";
+  }
+}
+
+// ---------------- CLIENT SHOWCASE MODE ----------------
+
+function setClientMode(enabled: boolean): void {
+  isClientMode = enabled;
+  if (enabled) {
+    mainSidebar.classList.add("collapsed");
+    btnExpandSidebar.style.display = "flex";
+    showcaseBanner.style.display = "flex";
+    btnClientMode.classList.add("btn-accent");
+    btnClientMode.classList.remove("btn-secondary");
+  } else {
+    mainSidebar.classList.remove("collapsed");
+    btnExpandSidebar.style.display = "none";
+    showcaseBanner.style.display = "none";
+    btnClientMode.classList.remove("btn-accent");
+    btnClientMode.classList.add("btn-secondary");
+  }
+}
+
+btnClientMode.addEventListener("click", () => {
+  setClientMode(!isClientMode);
+});
+
+btnExitClient.addEventListener("click", () => {
+  setClientMode(false);
+});
+
+btnToggleSidebar.addEventListener("click", () => {
+  mainSidebar.classList.add("collapsed");
+  btnExpandSidebar.style.display = "flex";
+});
+
+btnExpandSidebar.addEventListener("click", () => {
+  mainSidebar.classList.remove("collapsed");
+  btnExpandSidebar.style.display = "none";
+});
+
+btnFullscreen.addEventListener("click", () => {
+  if (!document.fullscreenElement) {
+    appContainer.requestFullscreen().catch(() => {});
+  } else {
+    document.exitFullscreen().catch(() => {});
+  }
+});
+
+btnResetCam.addEventListener("click", async () => {
+  if (activeSplat) {
+    await selectSplatById(activeSplat.id);
+  }
+});
+
+// ---------------- SHARE MODAL ----------------
+
+let modalTargetSplat: Splat | null = null;
+
+function openShareModal(splat: Splat): void {
+  modalTargetSplat = splat;
+  const isPub = splat.status === "published";
+
+  shareStatusBadge.className = `badge ${isPub ? "badge-published" : "badge-draft"}`;
+  shareStatusBadge.textContent = isPub ? "Published (Live)" : "Draft (Private)";
+  btnTogglePublishState.textContent = isPub ? "Switch to Draft Mode" : "🚀 Publish to Public Link";
+  btnTogglePublishState.className = `btn btn-sm ${isPub ? "btn-secondary" : "btn-accent"}`;
+
+  const origin = window.location.origin;
+  const publicLink = `${origin}/?view=${splat.slug}`;
+  const draftLink = `${origin}/?view=${splat.slug}&token=${splat.shareToken}`;
+  const embed = `<iframe src="${publicLink}" width="100%" height="600" frameborder="0" allowfullscreen allow="accelerometer; gyroscope; vr"></iframe>`;
+
+  sharePublicUrl.value = isPub ? publicLink : "(Publish scene first to activate public link)";
+  shareDraftUrl.value = draftLink;
+  shareEmbedCode.value = embed;
+
+  shareModal.style.display = "flex";
+}
+
+function closeShareModal(): void {
+  shareModal.style.display = "none";
+  modalTargetSplat = null;
+}
+
+btnShareModal.addEventListener("click", () => {
+  if (activeSplat) {
+    openShareModal(activeSplat);
+  } else {
+    // Prompt user to save current scene first
+    openSaveModal();
+  }
+});
+
+btnBannerShare.addEventListener("click", () => {
+  if (activeSplat) {
+    const origin = window.location.origin;
+    const url = activeSplat.status === "published"
+      ? `${origin}/?view=${activeSplat.slug}`
+      : `${origin}/?view=${activeSplat.slug}&token=${activeSplat.shareToken}`;
+    copyToClipboard(url, btnBannerShare, "Copied Link!");
+  }
+});
+
+btnBannerPublish.addEventListener("click", async () => {
+  if (activeSplat) {
+    try {
+      btnBannerPublish.textContent = "Publishing...";
+      await publishSplat(activeSplat.id, "published");
+      activeSplat.status = "published";
+      await loadSplatsData();
+      updateActiveSceneHeader();
+      alert("Scene is now published! Share link is live.");
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : "Failed to publish");
+    } finally {
+      btnBannerPublish.textContent = "🚀 Publish Now";
+    }
+  }
+});
+
+shareModalClose.addEventListener("click", closeShareModal);
+shareModal.addEventListener("click", (e) => {
+  if (e.target === shareModal) closeShareModal();
+});
+
+btnTogglePublishState.addEventListener("click", async () => {
+  if (!modalTargetSplat) return;
+  const nextStatus = modalTargetSplat.status === "published" ? "draft" : "published";
+  try {
+    btnTogglePublishState.disabled = true;
+    btnTogglePublishState.textContent = "Updating...";
+    const res = await publishSplat(modalTargetSplat.id, nextStatus);
+    modalTargetSplat.status = nextStatus;
+    modalTargetSplat.publishedAt = res.splat.publishedAt;
+    await loadSplatsData();
+    openShareModal(modalTargetSplat);
+    if (activeSplat?.id === modalTargetSplat.id) {
+      activeSplat.status = nextStatus;
+      updateActiveSceneHeader();
+    }
+  } catch (err: unknown) {
+    alert(err instanceof Error ? err.message : "Failed to update publish status");
+  } finally {
+    btnTogglePublishState.disabled = false;
+  }
+});
+
+function copyToClipboard(text: string, button: HTMLElement, successText = "Copied!"): void {
+  if (!text || text.startsWith("(")) return;
+  navigator.clipboard.writeText(text).then(() => {
+    const orig = button.textContent;
+    button.textContent = successText;
+    button.style.backgroundColor = "rgba(16, 185, 129, 0.3)";
+    setTimeout(() => {
+      button.textContent = orig;
+      button.style.backgroundColor = "";
+    }, 2000);
+  });
+}
+
+btnCopyPublicUrl.addEventListener("click", () => copyToClipboard(sharePublicUrl.value, btnCopyPublicUrl as HTMLElement));
+btnCopyDraftUrl.addEventListener("click", () => copyToClipboard(shareDraftUrl.value, btnCopyDraftUrl as HTMLElement));
+btnCopyEmbedCode.addEventListener("click", () => copyToClipboard(shareEmbedCode.value, btnCopyEmbedCode as HTMLElement));
+
+// ---------------- SAVE SPLAT MODAL ----------------
+
+function openSaveModal(): void {
+  inputSplatTitle.value = activeSplat?.title || (activeJobId ? `Job ${activeJobId}` : "Showcase 3D Scene");
+  inputSplatDesc.value = activeSplat?.description || "";
+  selectSplatStatus.value = "published";
+  saveSplatModal.style.display = "flex";
+}
+
+function closeSaveModal(): void {
+  saveSplatModal.style.display = "none";
+}
+
+btnNewSplatModal.addEventListener("click", openSaveModal);
+saveSplatClose.addEventListener("click", closeSaveModal);
+btnCancelSaveSplat.addEventListener("click", closeSaveModal);
+saveSplatModal.addEventListener("click", (e) => {
+  if (e.target === saveSplatModal) closeSaveModal();
+});
+
+formSaveSplat.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const title = inputSplatTitle.value.trim();
+  const description = inputSplatDesc.value.trim();
+  const status = selectSplatStatus.value as "draft" | "published";
+
+  if (!title) return;
+
+  try {
+    const submitBtn = document.getElementById("btn-submit-save-splat") as HTMLButtonElement;
+    submitBtn.disabled = true;
+    submitBtn.textContent = "Saving to Database...";
+
+    const newSplat = await createSplat({
+      title,
+      description,
+      status,
+      splatPath: currentLoadedPath || "/samples/bonsai.splat",
+      jobId: activeJobId || undefined,
+    });
+
+    closeSaveModal();
+    await loadSplatsData();
+    activeSplat = newSplat;
+    updateActiveSceneHeader();
+    openShareModal(newSplat);
+  } catch (err: unknown) {
+    alert(err instanceof Error ? err.message : "Failed to save splat");
+  } finally {
+    const submitBtn = document.getElementById("btn-submit-save-splat") as HTMLButtonElement;
+    submitBtn.disabled = false;
+    submitBtn.textContent = "Save & Generate Link";
+  }
+});
+
+// Save Angle / Camera config
+btnSaveCamera.addEventListener("click", async () => {
+  if (!activeSplat) {
+    alert("Please save or select a database Splat first to store its camera viewpoint.");
+    return;
+  }
+  try {
+    btnSaveCamera.textContent = "Saving Angle...";
+    await updateSplat(activeSplat.id, {
+      cameraConfig: {
+        position: [0, 1, 2],
+        target: [0, 0, 0],
+      },
+    });
+    btnSaveCamera.textContent = "Angle Saved!";
+    setTimeout(() => {
+      btnSaveCamera.innerHTML = `<span class="btn-icon">📐</span> Save Angle`;
+    }, 2000);
+  } catch (err: unknown) {
+    alert(err instanceof Error ? err.message : "Failed to save angle");
+    btnSaveCamera.innerHTML = `<span class="btn-icon">📐</span> Save Angle`;
+  }
+});
+
+// ---------------- TAB NAVIGATION & FILTERS ----------------
+
+tabSplats.addEventListener("click", () => {
+  tabSplats.classList.add("active");
+  tabTrain.classList.remove("active");
+  paneSplats.style.display = "block";
+  paneTrain.style.display = "none";
+});
+
+tabTrain.addEventListener("click", () => {
+  tabTrain.classList.add("active");
+  tabSplats.classList.remove("active");
+  paneTrain.style.display = "block";
+  paneSplats.style.display = "none";
+});
+
+filterPills.forEach((pill) => {
+  pill.addEventListener("click", () => {
+    filterPills.forEach((p) => p.classList.remove("active"));
+    pill.classList.add("active");
+    activeFilter = pill.getAttribute("data-filter") || "all";
+    renderSplatsList();
+  });
+});
+
+// ---------------- SETTINGS MODAL ----------------
+
+btnApiSettings.addEventListener("click", () => {
+  settingsModal.style.display = "flex";
+});
+
+settingsModalClose.addEventListener("click", () => {
+  settingsModal.style.display = "none";
+});
+
+settingsModal.addEventListener("click", (e) => {
+  if (e.target === settingsModal) settingsModal.style.display = "none";
+});
+
+btnSaveSettings.addEventListener("click", () => {
+  userApiKey = inputApiKey.value.trim();
+  localStorage.setItem("pv_api_key", userApiKey);
+  settingsModal.style.display = "none";
+  alert("Settings saved!");
+});
+
+// ---------------- TRAINING & JOBS PIPELINE ----------------
 
 function renderJobsList(): void {
   if (currentJobs.length === 0) {
@@ -117,15 +679,12 @@ function renderJobsList(): void {
             <span>Created: ${new Date(job.createdAt).toLocaleTimeString()}</span>
           </div>
           <div class="job-card-progress">
-            <div class="job-progress-wrapper">
-              <div class="job-progress-fill" style="width: ${progressPct}%;"></div>
+            <div class="progress-bar-wrapper">
+              <div class="progress-bar-fill" style="width: ${progressPct}%;"></div>
             </div>
-            <div class="job-progress-label">
-              <span>Progress</span>
-              <span>${progressPct}%</span>
-            </div>
+            <span class="progress-text">${progressPct}%</span>
           </div>
-          ${canTrain ? `<button class="btn-train-action" data-train-id="${job.id}">Start Training</button>` : ""}
+          ${canTrain ? `<button class="btn btn-sm btn-accent btn-train-action" data-train-id="${job.id}">Start Training</button>` : ""}
         </div>
       `;
     })
@@ -155,6 +714,7 @@ function updateLogsView(job: Job): void {
 
 async function selectJob(jobId: string): Promise<void> {
   activeJobId = jobId;
+  activeSplat = null;
   btnTrain.style.display = "none";
 
   document.querySelectorAll(".job-card").forEach((card) => {
@@ -164,8 +724,7 @@ async function selectJob(jobId: string): Promise<void> {
   const job = currentJobs.find((j) => j.id === jobId);
   if (!job) return;
 
-  activeSceneTitle.textContent = "Job Splat View";
-  activeSceneId.textContent = job.id;
+  updateActiveSceneHeader();
   updateLogsView(job);
   updateStepper(job);
 
@@ -175,6 +734,7 @@ async function selectJob(jobId: string): Promise<void> {
   }
 
   if (job.status === "COMPLETED" && job.splatPath) {
+    currentLoadedPath = job.splatPath;
     const v = initViewer();
     await v.loadSplat(assetUrl(job.splatPath));
     if (job.collisionPath) {
@@ -208,32 +768,6 @@ async function handleTrain(jobId: string): Promise<void> {
     btnTrain.textContent = "Start Training";
   }
 }
-
-async function loadDependenciesGuide(): Promise<void> {
-  if (depsLoaded) return;
-  try {
-    const res = await fetch("/DEPENDENCIES.md");
-    depsContent.textContent = res.ok ? await res.text() : "Could not load DEPENDENCIES.md";
-    depsLoaded = true;
-  } catch {
-    depsContent.textContent = "Could not load setup guide. See DEPENDENCIES.md in the project root.";
-  }
-}
-
-function openDepsModal(): void {
-  loadDependenciesGuide();
-  depsModal.style.display = "flex";
-}
-
-function closeDepsModal(): void {
-  depsModal.style.display = "none";
-}
-
-btnDeps.addEventListener("click", openDepsModal);
-depsModalClose.addEventListener("click", closeDepsModal);
-depsModal.addEventListener("click", (e) => {
-  if (e.target === depsModal) closeDepsModal();
-});
 
 // Upload handling
 dropZone.addEventListener("click", () => fileInput.click());
@@ -273,23 +807,79 @@ async function uploadFile(file: File): Promise<void> {
 
 btnLoadSample.addEventListener("click", async () => {
   const v = initViewer();
-  activeSceneTitle.textContent = "Sample Scene";
-  activeSceneId.textContent = "bonsai.splat";
+  activeSplat = null;
+  activeJobId = null;
+  currentLoadedPath = "/samples/bonsai.splat";
+  updateActiveSceneHeader();
   stepper.update("PENDING" as JobStatus, null);
   await v.loadSplat("/samples/bonsai.splat");
 });
 
 btnCapture.addEventListener("click", () => {
-  viewer?.captureScreenshot(`splat-viewport-${activeJobId || "sample"}.png`);
+  viewer?.captureScreenshot(`splat-viewport-${activeSplat?.slug || activeJobId || "sample"}.png`);
 });
 
+// ---------------- INITIALIZATION & URL ROUTE HANDLING ----------------
+
+async function checkUrlRouting(): Promise<boolean> {
+  const params = new URLSearchParams(window.location.search);
+  const viewIdentifier = params.get("view") || params.get("splat") || params.get("s");
+  const shareToken = params.get("token") || params.get("share");
+
+  if (viewIdentifier) {
+    try {
+      viewerOverlayText.textContent = "Loading client showcase scene...";
+      viewerOverlay.style.display = "flex";
+
+      const splat = await getSplat(viewIdentifier, shareToken || undefined, userApiKey || undefined);
+      if (splat) {
+        activeSplat = splat;
+        currentLoadedPath = splat.splatPath;
+        updateActiveSceneHeader();
+
+        // Enable presentation mode directly for client view
+        setClientMode(true);
+
+        const v = initViewer();
+        await v.loadSplat(assetUrl(splat.splatPath));
+        return true;
+      }
+    } catch (err: unknown) {
+      console.error("URL showcase load error:", err);
+      viewerOverlayText.textContent = err instanceof Error ? err.message : "Could not load shared scene";
+      viewerProgressIndicator.style.display = "none";
+      return false;
+    }
+  }
+  return false;
+}
+
 async function init(): Promise<void> {
-  if (await updateBackendStatus()) {
+  const isOnline = await updateBackendStatus();
+
+  if (isOnline) {
+    await loadSplatsData();
     await loadJobs();
   }
+
+  const isSharedView = await checkUrlRouting();
+
+  if (!isSharedView) {
+    // If no specific route in URL, load sample by default
+    const v = initViewer();
+    if (currentSplats.length > 0) {
+      selectSplatById(currentSplats[0].id);
+    } else {
+      v.loadSplat("/samples/bonsai.splat");
+    }
+  }
+
+  // Periodic polling for backend jobs / splats updates
   setInterval(async () => {
     if (await updateBackendStatus()) {
-      await loadJobs();
+      if (!isClientMode) {
+        await loadJobs();
+      }
       if (activeJobId) {
         const job = currentJobs.find((j) => j.id === activeJobId);
         if (job?.status === "COMPLETED" && job.splatPath) {
@@ -298,7 +888,7 @@ async function init(): Promise<void> {
         }
       }
     }
-  }, 2000);
+  }, 3000);
 }
 
 init();

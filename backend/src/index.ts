@@ -11,6 +11,7 @@ import { handleUpload } from "./routes/upload";
 import { createTrainRouter } from "./routes/train";
 import { createJobRouter } from "./routes/job";
 import { createHealthRouter } from "./routes/health";
+import { createSplatRouter } from "./routes/splat";
 import { handleWorkerCallback } from "./services/jobManager";
 import { validateWorkerCallback } from "./validation/schemas";
 
@@ -25,6 +26,12 @@ if (!fs.existsSync(uploadsDir)) {
 app.use(cors());
 app.use(express.json());
 app.use("/uploads", express.static(uploadsDir));
+
+// Also serve sample splats if available
+const samplesDir = path.join(__dirname, "../../frontend/public/samples");
+if (fs.existsSync(samplesDir)) {
+  app.use("/samples", express.static(samplesDir));
+}
 
 const storage = multer.diskStorage({
   destination: (_req, _file, cb) => cb(null, uploadsDir),
@@ -46,13 +53,44 @@ const upload = multer({
   },
 });
 
-// Public REST API
-app.use("/health", createHealthRouter());
-app.use("/job", createJobRouter());
+// Optional API Key validation helper
+export function requireApiKey(req: express.Request, res: express.Response, next: express.NextFunction) {
+  const configuredKey = process.env.API_KEY;
+  if (!configuredKey) {
+    return next(); // If no API key configured, pass through
+  }
+  const authHeader = req.headers["x-api-key"] || req.query.apiKey;
+  if (authHeader === configuredKey) {
+    return next();
+  }
+  return res.status(401).json({ error: "Unauthorized: Invalid or missing API key" });
+}
+
+// Public & Splat API
+const splatRouter = createSplatRouter();
+const jobRouter = createJobRouter();
+const healthRouter = createHealthRouter();
+
+app.use("/health", healthRouter);
+app.use("/job", jobRouter);
+app.use("/splat", splatRouter);
+app.use("/splats", splatRouter);
+
+// Aliases under /api
+app.use("/api/health", healthRouter);
+app.use("/api/job", jobRouter);
+app.use("/api/splat", splatRouter);
+app.use("/api/splats", splatRouter);
+
 app.post("/upload", upload.single("images"), (req, res) => {
   handleUpload(req, res);
 });
+app.post("/api/upload", upload.single("images"), (req, res) => {
+  handleUpload(req, res);
+});
+
 app.use("/train", createTrainRouter(uploadsDir));
+app.use("/api/train", createTrainRouter(uploadsDir));
 
 // Internal: GPU worker callbacks
 app.post("/internal/worker/callback", async (req, res) => {
@@ -86,6 +124,9 @@ app.listen(PORT, () => {
   console.log(`  POST /upload`);
   console.log(`  POST /train`);
   console.log(`  GET  /job/:id`);
-  console.log(`  GET  /job (list all jobs)`);
+  console.log(`  GET  /splats (list showcase splats)`);
+  console.log(`  GET  /splats/:identifier (get splat by id, slug, or shareToken)`);
+  console.log(`  POST /splats (create draft splat)`);
+  console.log(`  POST /splats/:id/publish (publish / unpublish splat)`);
   console.log(`Static uploads: http://localhost:${PORT}/uploads`);
 });

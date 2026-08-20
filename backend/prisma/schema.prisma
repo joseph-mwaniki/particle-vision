@@ -1,0 +1,46 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model Job {
+  id            String    @id @default(cuid())
+  status        String
+  progress      Float     @default(0.0)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  imagesPath    String
+  splatPath     String?
+  collisionPath String?
+  logs          String?   @db.Text
+  Splats        Splat[]
+}
+
+model Splat {
+  id            String    @id @default(uuid())
+  title         String
+  slug          String    @unique
+  description   String?   @db.Text
+  status        String    @default("draft")
+  splatPath     String
+  collisionPath String?
+  thumbnailUrl  String?
+  cameraConfig  Json?
+  shareToken    String    @unique @default(uuid())
+  views         Int       @default(0)
+  isPublic      Boolean   @default(true)
+  publishedAt   DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  jobId         String?
+  Job           Job?      @relation(fields: [jobId], references: [id], onDelete: SetNull)
+
+  @@index([slug])
+  @@index([status])
+  @@index([shareToken])
+}

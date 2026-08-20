@@ -59,8 +59,86 @@ export async function startTraining(jobId) {
     }
     return res.json();
 }
+// ---------------- SPLATS & SHOWCASE API ----------------
+export async function listSplats(onlyPublished = false) {
+    const url = `${API_BASE}/splats${onlyPublished ? "?published=true" : ""}`;
+    const res = await fetch(url);
+    if (!res.ok)
+        throw new Error(`Failed to list splats: ${res.status}`);
+    return res.json();
+}
+export async function getSplat(identifier, token, apiKey) {
+    const params = new URLSearchParams();
+    if (token)
+        params.set("token", token);
+    if (apiKey)
+        params.set("apiKey", apiKey);
+    const query = params.toString() ? `?${params.toString()}` : "";
+    const headers = {};
+    if (token)
+        headers["x-share-token"] = token;
+    if (apiKey)
+        headers["x-api-key"] = apiKey;
+    const res = await fetch(`${API_BASE}/splats/${encodeURIComponent(identifier)}${query}`, {
+        headers,
+    });
+    if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.error || `Failed to fetch splat: ${res.status}`);
+    }
+    return res.json();
+}
+export async function createSplat(data) {
+    const res = await fetch(`${API_BASE}/splats`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+    });
+    if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || `Failed to create splat: ${res.status}`);
+    }
+    return res.json();
+}
+export async function updateSplat(id, data) {
+    const res = await fetch(`${API_BASE}/splats/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+    });
+    if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || `Failed to update splat: ${res.status}`);
+    }
+    return res.json();
+}
+export async function publishSplat(id, status) {
+    const res = await fetch(`${API_BASE}/splats/${id}/publish`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status }),
+    });
+    if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || `Failed to change publish status: ${res.status}`);
+    }
+    return res.json();
+}
+export async function deleteSplat(id) {
+    const res = await fetch(`${API_BASE}/splats/${id}`, {
+        method: "DELETE",
+    });
+    if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || `Failed to delete splat: ${res.status}`);
+    }
+}
 export function assetUrl(path) {
-    if (path.startsWith("http"))
+    if (!path)
+        return "";
+    if (path.startsWith("http://") || path.startsWith("https://"))
         return path;
-    return `${API_BASE}${path}`;
+    if (path.startsWith("/"))
+        return `${API_BASE}${path}`;
+    return `${API_BASE}/${path}`;
 }

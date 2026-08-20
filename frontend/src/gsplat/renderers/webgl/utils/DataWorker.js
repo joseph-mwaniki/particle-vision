@@ -1,3 +1,4 @@
+/// <reference lib="webworker" />
 import createDataModule from "../../../wasm/data.js";
 let wasmModule;
 async function initWasm() {

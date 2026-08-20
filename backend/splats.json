@@ -1,0 +1,60 @@
+[
+  {
+    "id": "splat_uwvxkvyo6",
+    "title": "Bonsai Tree Showcase",
+    "slug": "bonsai-tree-showcase-63yrn",
+    "description": "High-resolution 3D Gaussian Splatting scan of a miniature Bonsai tree with intricate branch topology.",
+    "status": "published",
+    "splatPath": "/samples/bonsai.splat",
+    "collisionPath": null,
+    "thumbnailUrl": null,
+    "cameraConfig": {
+      "position": [
+        0.5,
+        1.2,
+        2.5
+      ],
+      "target": [
+        0,
+        0,
+        0
+      ]
+    },
+    "shareToken": "tok_hijn721ne4p57uyhn0kta8",
+    "views": 0,
+    "isPublic": true,
+    "publishedAt": "2026-08-19T11:27:30.714Z",
+    "createdAt": "2026-08-19T11:27:30.714Z",
+    "updatedAt": "2026-08-19T11:27:30.714Z",
+    "jobId": null
+  },
+  {
+    "id": "splat_9tyx8akpd",
+    "title": "Modern Architectural Pavilion (Draft)",
+    "slug": "modern-architectural-pavilion-draft-rn1c7",
+    "description": "Draft 3D gaussian reconstruction under review before client sign-off.",
+    "status": "published",
+    "splatPath": "/samples/bonsai.splat",
+    "collisionPath": null,
+    "thumbnailUrl": null,
+    "cameraConfig": {
+      "position": [
+        1,
+        1.5,
+        3
+      ],
+      "target": [
+        0,
+        0,
+        0
+      ]
+    },
+    "shareToken": "tok_9vhtzrhh729msjvecp93f",
+    "views": 1,
+    "isPublic": false,
+    "publishedAt": "2026-08-19T11:36:02.690Z",
+    "createdAt": "2026-08-19T11:27:31.310Z",
+    "updatedAt": "2026-08-19T11:36:02.690Z",
+    "jobId": null
+  }
+]
