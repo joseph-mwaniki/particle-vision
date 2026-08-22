@@ -51,9 +51,10 @@ ENV TORCH_CUDA_ARCH_LIST="8.0;8.6;8.9;9.0"
 
 # Install local modified gsplat engine and trainer libraries
 RUN python3.10 -m pip install -e /workspace/gsplat
-RUN cd /workspace/gsplat && \
-    python3.10 -m pip install -r examples/requirements.txt --no-build-isolation && \
-    python3.10 -m pip install -e libs/scene -e libs/stage
+
+# Install scene and stage libraries (skip examples to avoid dependency conflicts)
+RUN python3.10 -m pip install -e /workspace/gsplat/libs/scene
+RUN python3.10 -m pip install -e /workspace/gsplat/libs/stage
 
 # Create workspace directories
 RUN mkdir -p /workspace/data/uploads /workspace/data/output
