@@ -33,9 +33,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 RUN python3.10 -m pip install --upgrade pip
 
-# Install PyTorch with CUDA 12.8 support
+# Install PyTorch with CUDA 13.0 support
 RUN python3.10 -m pip install torch==2.10.0 \
-    --index-url https://download.pytorch.org/whl/cu128
+    --index-url https://download.pytorch.org/whl/cu130
 
 # Copy worker requirements and install Python dependencies
 COPY gpu-worker/requirements.txt ./requirements.txt
@@ -68,4 +68,4 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \
     CMD curl -f http://localhost:8080/health || exit 1
 
 WORKDIR /workspace/gpu-worker
-CMD ["python3.10", "handler.py"]
+CMD ["python3.10", "handler.py"]
