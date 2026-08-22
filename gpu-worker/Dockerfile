@@ -45,6 +45,9 @@ RUN python3.10 -m pip install --no-cache-dir -r requirements.txt
 COPY gpu-worker/ ./gpu-worker/
 COPY gsplat/ ./gsplat/
 
+# Set CUDA architectures for PyTorch C++ extensions to prevent IndexError
+ENV TORCH_CUDA_ARCH_LIST="8.0;8.6;8.9;9.0"
+
 # Install local modified gsplat engine and trainer libraries
 RUN python3.10 -m pip install -e /workspace/gsplat
 RUN cd /workspace/gsplat && \
