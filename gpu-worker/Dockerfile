@@ -4,13 +4,23 @@
 # Build from repository root:
 #   docker build -f gpu-worker/Dockerfile -t YOUR_DOCKERHUB_USERNAME/remote-view-worker:latest .
 
-FROM nvidia/cuda:12.8.0-cudnn-runtime-ubuntu22.04
+FROM nvidia/cuda:12.8.0-devel-ubuntu22.04
 
 WORKDIR /workspace
 
-# Install system dependencies, Python 3.10, COLMAP, and media libraries
+# Set CUDA environment paths
+ENV CUDA_HOME=/usr/local/cuda
+ENV PATH=/usr/local/cuda/bin:${PATH}
+ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64:${LD_LIBRARY_PATH}
+
+# Verify nvcc compiler is available
+RUN nvcc --version
+
+# Install system dependencies, Python 3.10, development headers, COLMAP, and media libraries
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
     python3.10 \
+    python3.10-dev \
     python3-pip \
     colmap \
     curl \
@@ -18,6 +28,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgl1-mesa-glx \
     libglib2.0-0 \
     ffmpeg \
+    ninja-build \
     && rm -rf /var/lib/apt/lists/*
 
 RUN python3.10 -m pip install --upgrade pip
@@ -48,7 +59,7 @@ ENV HOST=0.0.0.0
 ENV PORT=8080
 ENV WORK_DIR=/workspace/data
 ENV GSPLAT_REPO_PATH=/workspace/gsplat
-ENV PYTHONPATH=/workspace/gsplat:$PYTHONPATH
+ENV PYTHONPATH=/workspace/gsplat
 ENV USE_MOCK=false
 
 EXPOSE 8080

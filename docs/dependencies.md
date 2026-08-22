@@ -127,12 +127,12 @@ CUDA arch list for builds (from `building.yml`): `7.5;8.0;8.6;9.0`
 ### Docker Base Images (Future Training)
 
 ```dockerfile
-# Recommended
-FROM nvidia/cuda:12.8.0-cudnn-runtime-ubuntu22.04
+# Recommended (devel image required for building CUDA extensions like gsplat from source)
+FROM nvidia/cuda:12.8.0-devel-ubuntu22.04
 
 # Alternative versions from CI matrix
-FROM nvidia/cuda:12.6.0-cudnn-runtime-ubuntu22.04
-FROM nvidia/cuda:13.0.0-cudnn-runtime-ubuntu22.04
+FROM nvidia/cuda:12.6.0-devel-ubuntu22.04
+FROM nvidia/cuda:13.0.0-devel-ubuntu22.04
 ```
 
 ## gsplat.js
