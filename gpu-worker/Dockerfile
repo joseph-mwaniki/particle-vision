@@ -29,6 +29,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libglib2.0-0 \
     ffmpeg \
     ninja-build \
+    libglm-dev \
     && rm -rf /var/lib/apt/lists/*
 
 RUN python3.10 -m pip install --upgrade pip
