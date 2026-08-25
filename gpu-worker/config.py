@@ -12,7 +12,7 @@ HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", "8080"))
 
 # Pipeline mode
-USE_MOCK = os.getenv("USE_MOCK", "true").lower() in ("1", "true", "yes")
+USE_MOCK = os.getenv("USE_MOCK", "false").lower() in ("1", "true", "yes")
 
 # Paths
 WORK_DIR = Path(os.getenv("WORK_DIR", "/workspace/data"))
@@ -22,7 +22,7 @@ BACKEND_UPLOADS_DIR = Path(os.getenv("BACKEND_UPLOADS_DIR", str(WORK_DIR / "uplo
 
 # Backend callback
 BACKEND_CALLBACK_URL = os.getenv(
-    "BACKEND_CALLBACK_URL", "http://host.docker.internal:3001/internal/worker/callback"
+    "BACKEND_CALLBACK_URL", "https://particle-vision-backend.onrender.com"
 )
 
 # Training defaults
