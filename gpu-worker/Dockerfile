@@ -34,6 +34,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 RUN python3.10 -m pip install --upgrade pip
 
+# Install cloudflared (free public HTTPS tunneling for headless GPU containers)
+RUN curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o /usr/local/bin/cloudflared && chmod +x /usr/local/bin/cloudflared
+
 # Install PyTorch with CUDA 13.0 support
 RUN python3.10 -m pip install torch==2.10.0 \
     --index-url https://download.pytorch.org/whl/cu130
