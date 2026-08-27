@@ -5,7 +5,7 @@ import shutil
 from pathlib import Path
 from typing import Callable, Optional
 
-from config import COLMAP_QUALITY, find_colmap_binary
+from config import COLMAP_QUALITY, COLMAP_USE_GPU, find_colmap_binary
 from .utils import ensure_dir, extract_images_zip, run_command
 
 logger = logging.getLogger(__name__)
@@ -86,6 +86,8 @@ def run_colmap(
             str(preset["max_image_size"]),
             "--SiftExtraction.max_num_features",
             str(preset["max_num_features"]),
+            "--SiftExtraction.use_gpu",
+            str(COLMAP_USE_GPU),
         ],
         on_log=on_log,
     )
@@ -97,6 +99,8 @@ def run_colmap(
             "exhaustive_matcher",
             "--database_path",
             str(database_path),
+            "--SiftMatching.use_gpu",
+            str(COLMAP_USE_GPU),
         ],
         on_log=on_log,
     )
