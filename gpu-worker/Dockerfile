@@ -56,6 +56,9 @@ RUN python3.10 -m pip install -e /workspace/gsplat
 RUN python3.10 -m pip install -e /workspace/gsplat/libs/scene
 RUN python3.10 -m pip install -e /workspace/gsplat/libs/stage
 
+# Pre-compile gsplat CUDA extension during docker build to eliminate 6+ minute runtime JIT delay
+RUN python3.10 -c "from gsplat.cuda._backend import _C; print('gsplat CUDA extension pre-compiled successfully!')"
+
 # Create workspace directories
 RUN mkdir -p /workspace/data/uploads /workspace/data/output
 
@@ -66,6 +69,7 @@ ENV WORK_DIR=/workspace/data
 ENV GSPLAT_REPO_PATH=/workspace/gsplat
 ENV PYTHONPATH=/workspace/gsplat
 ENV USE_MOCK=false
+ENV QT_QPA_PLATFORM=offscreen
 
 EXPOSE 8080
 

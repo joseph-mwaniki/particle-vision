@@ -7,6 +7,9 @@ import sys
 from pathlib import Path
 from typing import Optional
 
+# Ensure Qt uses offscreen platform for headless environments like COLMAP
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
 # Server
 HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", "8080"))
