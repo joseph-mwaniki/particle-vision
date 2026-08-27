@@ -1,16 +1,18 @@
 import { WorkerCallbackPayload, WorkerRunRequest, WorkerRunResponse } from "../types/job";
 
 const GPU_WORKER_URL = process.env.GPU_WORKER_URL || "http://localhost:8080";
-const USE_MOCK_WORKER = process.env.USE_MOCK_WORKER !== "false";
+const USE_MOCK_WORKER = process.env.USE_MOCK_WORKER === "true";
 
 export async function dispatchTrainingJob(
   request: WorkerRunRequest
 ): Promise<WorkerRunResponse> {
   if (USE_MOCK_WORKER) {
+    console.log("[WorkerClient] USE_MOCK_WORKER is true, running mock worker.");
     return runMockWorker(request);
   }
 
   try {
+    console.log(`[WorkerClient] Dispatching job ${request.job_id} to GPU worker at ${GPU_WORKER_URL}/run`);
     const response = await fetch(`${GPU_WORKER_URL}/run`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -19,12 +21,12 @@ export async function dispatchTrainingJob(
 
     if (!response.ok) {
       const text = await response.text();
-      throw new Error(`Worker rejected job: ${response.status} ${text}`);
+      throw new Error(`Worker returned HTTP ${response.status}: ${text}`);
     }
 
     return (await response.json()) as WorkerRunResponse;
   } catch (err) {
-    console.warn("GPU worker unavailable, falling back to mock worker:", err);
+    console.warn(`[WorkerClient] GPU worker at ${GPU_WORKER_URL} unavailable or failed:`, err);
     return runMockWorker(request);
   }
 }
