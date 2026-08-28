@@ -3,7 +3,7 @@ torch
 torchvision
 gsplat
 imageio
-numpy
+numpy<2.0.0
 tqdm
 tyro
 viser
