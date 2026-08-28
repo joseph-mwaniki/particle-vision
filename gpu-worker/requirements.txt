@@ -13,3 +13,5 @@ plyfile
 trimesh
 requests
 pillow
+opencv-python-headless
+pycolmap
