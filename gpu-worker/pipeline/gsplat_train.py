@@ -70,7 +70,7 @@ def train_gsplat(
         "--disable-video",
         "--save-ply",
         "--data-factor",
-        "2",
+        "1",
     ]
 
     report("train", 45, "Running simple_trainer (this may take a while)")
