@@ -26,11 +26,13 @@ if (!fs.existsSync(uploadsDir)) {
 app.use(cors());
 app.use(express.json());
 app.use("/uploads", express.static(uploadsDir));
+app.use("/api/uploads", express.static(uploadsDir));
 
 // Also serve sample splats if available
 const samplesDir = path.join(__dirname, "../../frontend/public/samples");
 if (fs.existsSync(samplesDir)) {
   app.use("/samples", express.static(samplesDir));
+  app.use("/api/samples", express.static(samplesDir));
 }
 
 const storage = multer.diskStorage({
