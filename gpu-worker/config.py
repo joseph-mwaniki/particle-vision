@@ -32,7 +32,8 @@ BACKEND_CALLBACK_URL = os.getenv(
 GSPLAT_STEPS = int(os.getenv("GSPLAT_STEPS", "7000"))
 COLMAP_QUALITY = os.getenv("COLMAP_QUALITY", "medium")
 COLMAP_BINARY = os.getenv("COLMAP_BINARY", "colmap")
-COLMAP_USE_GPU = os.getenv("COLMAP_USE_GPU", "0")
+COLMAP_USE_GPU = os.getenv("COLMAP_USE_GPU", "1")
+COLMAP_MATCHER = os.getenv("COLMAP_MATCHER", "exhaustive")
 
 # gsplat source path (vendored in monorepo, mounted in Docker)
 GSPLAT_REPO_PATH = Path(os.getenv("GSPLAT_REPO_PATH", str(Path(__file__).resolve().parent.parent / "gsplat")))
