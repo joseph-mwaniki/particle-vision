@@ -1,6 +1,7 @@
 """COLMAP reconstruction stage."""
 
 import logging
+import os
 import shutil
 from pathlib import Path
 from typing import Callable, Optional
@@ -23,6 +24,15 @@ _QUALITY_PRESETS = {
 
 def _colmap_quality() -> dict:
     return _QUALITY_PRESETS.get(COLMAP_QUALITY, _QUALITY_PRESETS["medium"])
+
+
+def _wrap_xvfb_if_needed(cmd: list[str]) -> list[str]:
+    """Wrap command with xvfb-run if in headless environment and xvfb-run is available."""
+    if COLMAP_USE_GPU == "1" and "DISPLAY" not in os.environ:
+        xvfb = shutil.which("xvfb-run")
+        if xvfb:
+            return [xvfb, "-a", *cmd]
+    return cmd
 
 
 def run_colmap(
@@ -71,39 +81,85 @@ def run_colmap(
         if on_progress:
             on_progress(substage, progress, message)
 
-    report("extract_features", 12, "Running feature extraction")
-    run_command(
-        [
-            colmap_bin,
-            "feature_extractor",
-            "--database_path",
-            str(database_path),
-            "--image_path",
-            str(dataset_images),
-            "--ImageReader.single_camera",
-            "1",
-            "--SiftExtraction.max_image_size",
-            str(preset["max_image_size"]),
-            "--SiftExtraction.max_num_features",
-            str(preset["max_num_features"]),
-            "--SiftExtraction.use_gpu",
-            str(COLMAP_USE_GPU),
-        ],
-        on_log=on_log,
-    )
+    report("extract_features", 12, f"Running feature extraction (GPU={COLMAP_USE_GPU})")
+    try:
+        run_command(
+            _wrap_xvfb_if_needed([
+                colmap_bin,
+                "feature_extractor",
+                "--database_path",
+                str(database_path),
+                "--image_path",
+                str(dataset_images),
+                "--ImageReader.single_camera",
+                "1",
+                "--SiftExtraction.max_image_size",
+                str(preset["max_image_size"]),
+                "--SiftExtraction.max_num_features",
+                str(preset["max_num_features"]),
+                "--SiftExtraction.use_gpu",
+                str(COLMAP_USE_GPU),
+            ]),
+            on_log=on_log,
+        )
+    except Exception as exc:
+        if COLMAP_USE_GPU == "1":
+            logger.warning("GPU feature extraction failed (%s). Falling back to CPU extraction.", exc)
+            if on_log:
+                on_log(f"Warning: GPU extraction failed ({exc}). Retrying on CPU...")
+            run_command(
+                [
+                    colmap_bin,
+                    "feature_extractor",
+                    "--database_path",
+                    str(database_path),
+                    "--image_path",
+                    str(dataset_images),
+                    "--ImageReader.single_camera",
+                    "1",
+                    "--SiftExtraction.max_image_size",
+                    str(preset["max_image_size"]),
+                    "--SiftExtraction.max_num_features",
+                    str(preset["max_num_features"]),
+                    "--SiftExtraction.use_gpu",
+                    "0",
+                ],
+                on_log=on_log,
+            )
+        else:
+            raise
 
-    report("match_features", 20, "Running exhaustive feature matching")
-    run_command(
-        [
-            colmap_bin,
-            "exhaustive_matcher",
-            "--database_path",
-            str(database_path),
-            "--SiftMatching.use_gpu",
-            str(COLMAP_USE_GPU),
-        ],
-        on_log=on_log,
-    )
+    report("match_features", 20, f"Running exhaustive feature matching (GPU={COLMAP_USE_GPU})")
+    try:
+        run_command(
+            _wrap_xvfb_if_needed([
+                colmap_bin,
+                "exhaustive_matcher",
+                "--database_path",
+                str(database_path),
+                "--SiftMatching.use_gpu",
+                str(COLMAP_USE_GPU),
+            ]),
+            on_log=on_log,
+        )
+    except Exception as exc:
+        if COLMAP_USE_GPU == "1":
+            logger.warning("GPU feature matching failed (%s). Falling back to CPU matching.", exc)
+            if on_log:
+                on_log(f"Warning: GPU matching failed ({exc}). Retrying on CPU...")
+            run_command(
+                [
+                    colmap_bin,
+                    "exhaustive_matcher",
+                    "--database_path",
+                    str(database_path),
+                    "--SiftMatching.use_gpu",
+                    "0",
+                ],
+                on_log=on_log,
+            )
+        else:
+            raise
 
     report("sparse_reconstruction", 28, "Running sparse mapper (SfM)")
     run_command(

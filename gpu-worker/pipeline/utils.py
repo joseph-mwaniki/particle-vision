@@ -81,16 +81,23 @@ def run_command(
 
 def download_file(url: str, dest_path: Path, on_log: Optional[LogFn] = None) -> Path:
     """Download a file from an HTTP/HTTPS URL to dest_path."""
+    import urllib.parse
     import urllib.request
 
     ensure_dir(dest_path.parent)
-    if on_log:
-        on_log(f"Downloading input archive from {url}...")
-    logger.info("Downloading file from %s to %s", url, dest_path)
 
-    urllib.request.urlretrieve(url, str(dest_path))
+    # Encode spaces and special characters in URL path safely
+    parsed = urllib.parse.urlsplit(url)
+    encoded_path = urllib.parse.quote(urllib.parse.unquote(parsed.path))
+    safe_url = urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, encoded_path, parsed.query, parsed.fragment))
+
+    if on_log:
+        on_log(f"Downloading input archive from {safe_url}...")
+    logger.info("Downloading file from %s to %s", safe_url, dest_path)
+
+    urllib.request.urlretrieve(safe_url, str(dest_path))
     if not dest_path.is_file() or dest_path.stat().st_size == 0:
-        raise RuntimeError(f"Failed to download or empty file from {url}")
+        raise RuntimeError(f"Failed to download or empty file from {safe_url}")
     return dest_path
 
 
