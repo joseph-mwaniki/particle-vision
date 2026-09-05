@@ -4,15 +4,28 @@ import logging
 import shutil
 from pathlib import Path
 
-from config import BACKEND_UPLOADS_DIR
+from typing import Callable, Optional
+from config import BACKEND_CALLBACK_URL, BACKEND_UPLOADS_DIR
 
 logger = logging.getLogger(__name__)
 
+LogFn = Callable[[str], None]
 
-def _upload_to_remote_backend(splat_path: Path, collision_path: Path, upload_url: str) -> None:
+
+def _upload_to_remote_backend(
+    splat_path: Path,
+    collision_path: Path,
+    upload_url: str,
+    on_log: Optional[LogFn] = None,
+) -> None:
     """Stream scene.splat and collision.glb to the backend via multipart POST."""
     import urllib.request
     import uuid
+
+    splat_mb = (splat_path.stat().st_size / (1024 * 1024)) if splat_path.is_file() else 0
+    collision_mb = (collision_path.stat().st_size / (1024 * 1024)) if collision_path.is_file() else 0
+    if on_log:
+        on_log(f"[upload] Preparing upload to {upload_url} (splat: {splat_mb:.1f} MB, collision: {collision_mb:.1f} MB)...")
 
     boundary = f"----WebKitFormBoundary{uuid.uuid4().hex}"
     data = bytearray()
@@ -40,8 +53,11 @@ def _upload_to_remote_backend(splat_path: Path, collision_path: Path, upload_url
         headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=60) as resp:
+    # Increased timeout to 300 seconds for large 3D scene files
+    with urllib.request.urlopen(req, timeout=300) as resp:
         logger.info("[upload] Remote upload to %s status: %d", upload_url, resp.status)
+        if on_log:
+            on_log(f"[upload] Assets successfully uploaded to backend ({resp.status} OK)")
 
 
 def upload_results(
@@ -50,6 +66,7 @@ def upload_results(
     callback_url: str,
     job_id: str,
     backend_uploads_dir: Path | None = None,
+    on_log: Optional[LogFn] = None,
 ) -> dict:
     """
     Copy training results into the backend uploads tree, or upload via HTTP if remote.
@@ -72,15 +89,22 @@ def upload_results(
     if collision_path != dest_collision:
         shutil.copy2(collision_path, dest_collision)
 
+    # Determine upload URL
+    target_url = callback_url
+    if ("localhost" in target_url or "127.0.0.1" in target_url) and BACKEND_CALLBACK_URL and "localhost" not in BACKEND_CALLBACK_URL:
+        target_url = f"{BACKEND_CALLBACK_URL.rstrip('/')}/internal/worker/callback"
+
     # If backend is on a remote host, upload files directly over HTTP
-    if callback_url.startswith("http://") or callback_url.startswith("https://"):
-        if "localhost" not in callback_url and "127.0.0.1" not in callback_url:
-            upload_url = callback_url.replace("/callback", f"/upload-result/{job_id}")
+    if target_url.startswith("http://") or target_url.startswith("https://"):
+        if "localhost" not in target_url and "127.0.0.1" not in target_url:
+            upload_url = target_url.replace("/callback", f"/upload-result/{job_id}")
             try:
                 logger.info("[upload] Uploading outputs to remote backend: %s", upload_url)
-                _upload_to_remote_backend(dest_splat, dest_collision, upload_url)
+                _upload_to_remote_backend(dest_splat, dest_collision, upload_url, on_log=on_log)
             except Exception as exc:
                 logger.error("[upload] Remote upload failed: %s", exc)
+                if on_log:
+                    on_log(f"[upload] WARNING: Remote upload failed: {exc}")
 
     logger.info("[upload] Results ready for job %s", job_id)
 

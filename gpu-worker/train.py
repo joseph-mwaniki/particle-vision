@@ -159,6 +159,7 @@ def run_full_pipeline(
         callback_url,
         job_id,
         backend_uploads_dir=backend_uploads,
+        on_log=lambda msg: on_status(STAGE_EXPORT, msg, 96),
     )
 
     on_status(
