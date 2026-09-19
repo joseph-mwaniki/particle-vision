@@ -192,9 +192,9 @@ export async function uploadZipFiles(
       const statusResponse = await fetch(`${API_BASE}/upload-session/${session.id}`);
       if (!statusResponse.ok) throw new Error(await statusResponse.text());
       const status = await statusResponse.json() as UploadSessionStatus;
-      onStage?.(status.status === "PROCESSING" ? "Processing on GPU..." : "Combining files...");
+      onStage?.(status.status === "ASSEMBLED" ? "Files combined. Ready to start training." : "Combining files...");
       if (status.status === "FAILED") throw new Error("Upload assembly failed. Check the backend logs for details.");
-      if (status.job) return status.job;
+      if (status.status === "ASSEMBLED" && status.job) return status.job;
       await new Promise((resolve) => setTimeout(resolve, 2000));
     }
   } catch (error) {

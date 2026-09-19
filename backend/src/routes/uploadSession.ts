@@ -11,7 +11,6 @@ import {
   presignUploadPart,
 } from "../services/objectStorage";
 import { assembleZip } from "../services/zipAssembler";
-import { startTrainingJob } from "../services/jobManager";
 
 const MAX_FILES = Number(process.env.MAX_UPLOAD_FILES || 20);
 const MAX_FILE_SIZE = Number(process.env.MAX_UPLOAD_FILE_SIZE || 5 * 1024 * 1024 * 1024);
@@ -63,10 +62,9 @@ async function assembleAndStart(sessionId: string, uploadsDir: string) {
     await database.job.update({ where: { id: job.id }, data: { uploadSessionId: sessionId } });
     await database.uploadSession.update({
       where: { id: sessionId },
-      data: { status: "PROCESSING", combinedKey, totalSize: session.files.reduce((sum: bigint, file: any) => sum + BigInt(file.size), 0n) },
+      data: { status: "ASSEMBLED", combinedKey, totalSize: session.files.reduce((sum: bigint, file: any) => sum + BigInt(file.size), 0n) },
     });
     await updateJob(job.id, { logs: `${job.logs || ""}\nCombined ${imageCount} images from ${session.files.length} ZIP files.` });
-    await startTrainingJob(job.id, uploadsDir);
   } catch (error) {
     await database.uploadSession.update({ where: { id: sessionId }, data: { status: "FAILED" } }).catch(() => undefined);
     throw error;
