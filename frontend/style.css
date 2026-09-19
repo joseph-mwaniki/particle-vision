@@ -550,6 +550,34 @@ body.dark-theme {
   color: var(--text-muted);
 }
 
+.selected-files {
+  margin-top: 12px;
+  display: grid;
+  gap: 6px;
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+}
+
+.selected-file {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius-sm);
+  background: rgba(0, 0, 0, 0.16);
+}
+
+.selected-file-size {
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.upload-selected-btn {
+  width: 100%;
+  margin-top: 12px;
+}
+
 .progress-bar-wrapper {
   background: rgba(255, 255, 255, 0.06);
   height: 6px;

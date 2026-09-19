@@ -1,7 +1,6 @@
 import {
   checkHealth,
   listJobs,
-  uploadImages,
   uploadZipFiles,
   startTraining,
   assetUrl,
@@ -42,8 +41,12 @@ const fileInput = document.getElementById("file-input") as HTMLInputElement;
 const uploadProgressContainer = document.getElementById("upload-progress-container")!;
 const uploadProgressFill = document.getElementById("upload-progress-fill")!;
 const uploadProgressText = document.getElementById("upload-progress-text")!;
+const selectedFilesElement = document.getElementById("selected-files")!;
+const btnUploadSelected = document.getElementById("btn-upload-selected") as HTMLButtonElement;
 const jobsList = document.getElementById("jobs-list")!;
 const logsConsole = document.getElementById("logs-console")!;
+
+let selectedZipFiles: File[] = [];
 
 // DOM Elements - Viewer & Actions
 const activeSceneTitle = document.getElementById("active-scene-title")!;
@@ -777,11 +780,50 @@ dropZone.addEventListener("dragleave", () => dropZone.classList.remove("active")
 dropZone.addEventListener("drop", (e) => {
   e.preventDefault();
   dropZone.classList.remove("active");
-  if (e.dataTransfer?.files.length) uploadFiles(Array.from(e.dataTransfer.files));
+  if (e.dataTransfer?.files.length) addFiles(Array.from(e.dataTransfer.files));
 });
 fileInput.addEventListener("change", () => {
-  if (fileInput.files?.length) uploadFiles(Array.from(fileInput.files));
+  if (fileInput.files?.length) addFiles(Array.from(fileInput.files));
+  fileInput.value = "";
 });
+
+btnUploadSelected.addEventListener("click", () => uploadFiles(selectedZipFiles));
+
+function addFiles(files: File[]): void {
+  const zipFiles = files.filter((file) => file.name.toLowerCase().endsWith(".zip"));
+  if (zipFiles.length !== files.length) alert("Only .zip files can be added.");
+
+  const existing = new Set(selectedZipFiles.map((file) => `${file.name}:${file.size}:${file.lastModified}`));
+  selectedZipFiles = [...selectedZipFiles, ...zipFiles.filter((file) => {
+    const key = `${file.name}:${file.size}:${file.lastModified}`;
+    if (existing.has(key)) return false;
+    existing.add(key);
+    return true;
+  })];
+  renderSelectedFiles();
+}
+
+function renderSelectedFiles(): void {
+  selectedFilesElement.replaceChildren();
+  selectedFilesElement.hidden = selectedZipFiles.length === 0;
+  btnUploadSelected.disabled = selectedZipFiles.length === 0;
+  if (!selectedZipFiles.length) return;
+
+  const heading = document.createElement("div");
+  heading.textContent = `${selectedZipFiles.length} ZIP file${selectedZipFiles.length === 1 ? "" : "s"} selected`;
+  selectedFilesElement.appendChild(heading);
+  selectedZipFiles.forEach((file) => {
+    const row = document.createElement("div");
+    row.className = "selected-file";
+    const name = document.createElement("span");
+    name.textContent = file.name;
+    const size = document.createElement("span");
+    size.className = "selected-file-size";
+    size.textContent = `${(file.size / (1024 * 1024)).toFixed(1)} MB`;
+    row.append(name, size);
+    selectedFilesElement.appendChild(row);
+  });
+}
 
 async function uploadFiles(files: File[]): Promise<void> {
   if (!files.length || files.some((file) => !file.name.toLowerCase().endsWith(".zip"))) {
@@ -790,6 +832,7 @@ async function uploadFiles(files: File[]): Promise<void> {
   }
 
   uploadProgressContainer.style.display = "block";
+  btnUploadSelected.disabled = true;
   try {
     const job = await uploadZipFiles(files, (pct) => {
       uploadProgressFill.style.width = `${pct}%`;
@@ -799,6 +842,8 @@ async function uploadFiles(files: File[]): Promise<void> {
     });
     uploadProgressContainer.style.display = "none";
     uploadProgressFill.style.width = "0%";
+    selectedZipFiles = [];
+    renderSelectedFiles();
     await loadJobs();
     selectJob(job.id);
   } catch (e: unknown) {
