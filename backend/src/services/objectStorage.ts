@@ -12,11 +12,20 @@ import {
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { Readable } from "stream";
 
+const accessKeyId = process.env.S3_ACCESS_KEY_ID || process.env.AWS_ACCESS_KEY_ID;
+const secretAccessKey = process.env.S3_SECRET_ACCESS_KEY || process.env.AWS_SECRET_ACCESS_KEY;
 const bucket = process.env.S3_BUCKET;
 const endpoint = process.env.S3_ENDPOINT;
 
+const missingStorageVariables = [
+  !endpoint && "S3_ENDPOINT",
+  !accessKeyId && "S3_ACCESS_KEY_ID (or AWS_ACCESS_KEY_ID)",
+  !secretAccessKey && "S3_SECRET_ACCESS_KEY (or AWS_SECRET_ACCESS_KEY)",
+  !bucket && "S3_BUCKET",
+].filter(Boolean) as string[];
+
 export const objectStorageConfigured = Boolean(
-  bucket && process.env.S3_ACCESS_KEY_ID && process.env.S3_SECRET_ACCESS_KEY
+  missingStorageVariables.length === 0
 );
 
 const client = objectStorageConfigured
@@ -25,15 +34,15 @@ const client = objectStorageConfigured
       endpoint,
       forcePathStyle: process.env.S3_FORCE_PATH_STYLE === "true",
       credentials: {
-        accessKeyId: process.env.S3_ACCESS_KEY_ID as string,
-        secretAccessKey: process.env.S3_SECRET_ACCESS_KEY as string,
+        accessKeyId: accessKeyId as string,
+        secretAccessKey: secretAccessKey as string,
       },
     })
   : null;
 
 function requireStorage(): { client: S3Client; bucket: string } {
   if (!client || !bucket) {
-    throw new Error("S3/R2 storage is not configured. Set S3_ENDPOINT, S3_REGION, S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY, and S3_BUCKET.");
+    throw new Error(`S3/R2 storage is not configured. Missing: ${missingStorageVariables.join(", ")}`);
   }
   return { client, bucket };
 }
