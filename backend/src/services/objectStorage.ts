@@ -5,11 +5,11 @@ import {
   DeleteObjectCommand,
   GetObjectCommand,
   HeadObjectCommand,
-  PutObjectCommand,
   S3Client,
   UploadPartCommand,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { Upload } from "@aws-sdk/lib-storage";
 import { Readable } from "stream";
 
 const accessKeyId = process.env.S3_ACCESS_KEY_ID || process.env.AWS_ACCESS_KEY_ID;
@@ -109,13 +109,19 @@ export async function getObjectStream(key: string): Promise<Readable> {
 
 export async function putObjectStream(key: string, body: Readable, contentLength?: number) {
   const storage = requireStorage();
-  await storage.client.send(new PutObjectCommand({
-    Bucket: storage.bucket,
-    Key: key,
-    Body: body,
-    ContentLength: contentLength,
-    ContentType: "application/zip",
-  }));
+  const upload = new Upload({
+    client: storage.client,
+    params: {
+      Bucket: storage.bucket,
+      Key: key,
+      Body: body,
+      ...(contentLength === undefined ? {} : { ContentLength: contentLength }),
+      ContentType: "application/zip",
+    },
+    partSize: Math.max(5 * 1024 * 1024, Number(process.env.S3_UPLOAD_PART_SIZE || 64 * 1024 * 1024)),
+    queueSize: 1,
+  });
+  await upload.done();
 }
 
 export async function headObject(key: string) {
