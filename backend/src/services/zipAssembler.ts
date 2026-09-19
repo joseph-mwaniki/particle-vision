@@ -30,11 +30,8 @@ export async function assembleZip(
   combinedKey: string,
   onLog?: (message: string) => void,
 ): Promise<number> {
-  const archiver = (await import("archiver")) as unknown as (
-    format: string,
-    options?: { zlib?: { level?: number } },
-  ) => Archive;
-  const archive = archiver("zip", { zlib: { level: 0 } });
+  const { ZipArchive } = await import("archiver");
+  const archive = new ZipArchive({ zlib: { level: 0 } }) as unknown as Archive;
   const output = new PassThrough();
   const uploadPromise = putObjectStream(combinedKey, output);
   let imageCount = 0;
