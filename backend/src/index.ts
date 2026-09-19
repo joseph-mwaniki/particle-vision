@@ -14,6 +14,7 @@ import { createHealthRouter } from "./routes/health";
 import { createSplatRouter } from "./routes/splat";
 import { handleWorkerCallback } from "./services/jobManager";
 import { validateWorkerCallback } from "./validation/schemas";
+import { createUploadSessionRouter } from "./routes/uploadSession";
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -84,6 +85,10 @@ app.use("/api/health", healthRouter);
 app.use("/api/job", jobRouter);
 app.use("/api/splat", splatRouter);
 app.use("/api/splats", splatRouter);
+
+const uploadSessionRouter = createUploadSessionRouter(uploadsDir);
+app.use("/upload-session", uploadSessionRouter);
+app.use("/api/upload-session", uploadSessionRouter);
 
 app.post("/upload", upload.single("images"), (req, res) => {
   handleUpload(req, res);

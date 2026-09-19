@@ -34,6 +34,18 @@ npm install
 npm run dev
 ```
 
+For the multi-ZIP upload flow, set the S3-compatible storage variables in `backend/.env`:
+
+```bash
+S3_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com
+S3_REGION=auto
+S3_ACCESS_KEY_ID=...
+S3_SECRET_ACCESS_KEY=...
+S3_BUCKET=particle-vision
+```
+
+Configure bucket CORS to allow the frontend origin to `PUT` presigned parts and expose the `ETag` response header. AWS S3 uses its regional endpoint instead of the R2 endpoint above.
+
 Verify: `curl http://localhost:3001/health`
 
 ### 4. Start GPU Worker (optional)

@@ -98,6 +98,111 @@ export async function uploadImages(file: File, onProgress?: (pct: number) => voi
   });
 }
 
+interface UploadFileInit {
+  fileId: string;
+  partSize: number;
+  totalParts: number;
+  urls: string[];
+}
+
+interface UploadSessionStatus {
+  id: string;
+  status: string;
+  jobId: string | null;
+  job: Job | null;
+}
+
+function uploadPart(url: string, body: Blob, onProgress: (loaded: number) => void): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("PUT", url);
+    xhr.onload = () => {
+      if (xhr.status < 200 || xhr.status >= 300) {
+        reject(new Error(`Object storage part upload failed: ${xhr.status}`));
+        return;
+      }
+      const etag = xhr.getResponseHeader("ETag");
+      if (!etag) {
+        reject(new Error("Object storage did not expose the ETag header. Check the bucket CORS configuration."));
+        return;
+      }
+      resolve(etag);
+    };
+    xhr.onerror = () => reject(new Error("Network error during object storage upload"));
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable) onProgress(event.loaded);
+    };
+    xhr.send(body);
+  });
+}
+
+export async function uploadZipFiles(
+  files: File[],
+  onProgress?: (pct: number) => void,
+  onStage?: (stage: string) => void,
+): Promise<Job> {
+  const sessionResponse = await fetch(`${API_BASE}/upload-session`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ originalFileName: files[0]?.name || "dataset.zip" }),
+  });
+  if (!sessionResponse.ok) throw new Error(await sessionResponse.text());
+  const session = await sessionResponse.json() as { id: string };
+  const totalBytes = files.reduce((sum, file) => sum + file.size, 0);
+  let uploadedBytes = 0;
+
+  try {
+    for (const file of files) {
+      if (!file.name.toLowerCase().endsWith(".zip")) throw new Error(`${file.name} is not a ZIP file`);
+      onStage?.(`Uploading ${file.name}`);
+      const initResponse = await fetch(`${API_BASE}/upload-session/${session.id}/file`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ originalName: file.name, size: file.size }),
+      });
+      if (!initResponse.ok) throw new Error(await initResponse.text());
+      const upload = await initResponse.json() as UploadFileInit;
+      const parts: Array<{ PartNumber: number; ETag: string }> = [];
+      for (let partNumber = 1; partNumber <= upload.totalParts; partNumber += 1) {
+        const start = (partNumber - 1) * upload.partSize;
+        const end = Math.min(start + upload.partSize, file.size);
+        let partLoaded = 0;
+        const etag = await uploadPart(upload.urls[partNumber - 1], file.slice(start, end), (loaded) => {
+          uploadedBytes += loaded - partLoaded;
+          partLoaded = loaded;
+          onProgress?.((uploadedBytes / totalBytes) * 100);
+        });
+        uploadedBytes += (end - start) - partLoaded;
+        onProgress?.((uploadedBytes / totalBytes) * 100);
+        parts.push({ PartNumber: partNumber, ETag: etag });
+      }
+      const completeResponse = await fetch(`${API_BASE}/upload-session/${session.id}/file/${upload.fileId}/complete`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ parts }),
+      });
+      if (!completeResponse.ok) throw new Error(await completeResponse.text());
+    }
+
+    onStage?.("Combining files...");
+    const completeResponse = await fetch(`${API_BASE}/upload-session/${session.id}/complete`, { method: "POST" });
+    if (!completeResponse.ok) throw new Error(await completeResponse.text());
+
+    for (;;) {
+      const statusResponse = await fetch(`${API_BASE}/upload-session/${session.id}`);
+      if (!statusResponse.ok) throw new Error(await statusResponse.text());
+      const status = await statusResponse.json() as UploadSessionStatus;
+      onStage?.(status.status === "PROCESSING" ? "Processing on GPU..." : "Combining files...");
+      if (status.status === "FAILED") throw new Error("Upload assembly failed. Check the backend logs for details.");
+      if (status.job) return status.job;
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+    }
+  } catch (error) {
+    await fetch(`${API_BASE}/upload-session/${session.id}/abort`, { method: "POST" }).catch(() => undefined);
+    throw error;
+  }
+}
+
 export async function startTraining(jobId: string): Promise<{ message: string; jobId: string }> {
   const res = await fetch(`${API_BASE}/train`, {
     method: "POST",

@@ -2,6 +2,7 @@ import {
   checkHealth,
   listJobs,
   uploadImages,
+  uploadZipFiles,
   startTraining,
   assetUrl,
   listSplats,
@@ -776,23 +777,25 @@ dropZone.addEventListener("dragleave", () => dropZone.classList.remove("active")
 dropZone.addEventListener("drop", (e) => {
   e.preventDefault();
   dropZone.classList.remove("active");
-  if (e.dataTransfer?.files.length) uploadFile(e.dataTransfer.files[0]);
+  if (e.dataTransfer?.files.length) uploadFiles(Array.from(e.dataTransfer.files));
 });
 fileInput.addEventListener("change", () => {
-  if (fileInput.files?.length) uploadFile(fileInput.files[0]);
+  if (fileInput.files?.length) uploadFiles(Array.from(fileInput.files));
 });
 
-async function uploadFile(file: File): Promise<void> {
-  if (!file.name.endsWith(".zip")) {
-    alert("Please upload a .zip file containing images.");
+async function uploadFiles(files: File[]): Promise<void> {
+  if (!files.length || files.some((file) => !file.name.toLowerCase().endsWith(".zip"))) {
+    alert("Please upload one or more .zip files containing images.");
     return;
   }
 
   uploadProgressContainer.style.display = "block";
   try {
-    const job = await uploadImages(file, (pct) => {
+    const job = await uploadZipFiles(files, (pct) => {
       uploadProgressFill.style.width = `${pct}%`;
       uploadProgressText.textContent = `Uploading: ${pct.toFixed(0)}%`;
+    }, (stage) => {
+      uploadProgressText.textContent = stage;
     });
     uploadProgressContainer.style.display = "none";
     uploadProgressFill.style.width = "0%";

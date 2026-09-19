@@ -17,7 +17,45 @@ model Job {
   splatPath     String?
   collisionPath String?
   logs          String?   @db.Text
+  uploadSessionId String?  @unique
+  uploadSession UploadSession? @relation(fields: [uploadSessionId], references: [id], onDelete: SetNull)
   Splats        Splat[]
+}
+
+model UploadSession {
+  id               String       @id
+  status           String       @default("UPLOADING")
+  originalFileName String       @default("dataset.zip")
+  totalSize        BigInt       @default(0)
+  totalFiles       Int          @default(0)
+  storagePrefix    String
+  combinedKey      String?
+  job              Job?
+  files            UploadFile[]
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+  expiresAt        DateTime
+
+  @@index([status])
+  @@index([expiresAt])
+}
+
+model UploadFile {
+  id             String        @id
+  sessionId      String
+  session        UploadSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  originalName   String
+  objectKey      String        @unique
+  size           BigInt
+  multipartId    String
+  partSize       Int
+  totalParts     Int
+  completedParts Json          @default("[]")
+  status         String        @default("UPLOADING")
+  createdAt      DateTime      @default(now())
+  completedAt    DateTime?
+
+  @@index([sessionId])
 }
 
 model Splat {

@@ -1,4 +1,4 @@
-import { checkHealth, listJobs, uploadImages, startTraining, assetUrl, listSplats, getSplat, createSplat, updateSplat, publishSplat, deleteSplat, } from "./api";
+import { checkHealth, listJobs, uploadZipFiles, startTraining, assetUrl, listSplats, getSplat, createSplat, updateSplat, publishSplat, deleteSplat, } from "./api";
 import { SplatViewer } from "./viewer/viewer";
 import { PipelineStepper } from "./components/Stepper";
 // DOM Elements - Navigation & UI
@@ -703,22 +703,24 @@ dropZone.addEventListener("drop", (e) => {
     e.preventDefault();
     dropZone.classList.remove("active");
     if (e.dataTransfer?.files.length)
-        uploadFile(e.dataTransfer.files[0]);
+        uploadFiles(Array.from(e.dataTransfer.files));
 });
 fileInput.addEventListener("change", () => {
     if (fileInput.files?.length)
-        uploadFile(fileInput.files[0]);
+        uploadFiles(Array.from(fileInput.files));
 });
-async function uploadFile(file) {
-    if (!file.name.endsWith(".zip")) {
-        alert("Please upload a .zip file containing images.");
+async function uploadFiles(files) {
+    if (!files.length || files.some((file) => !file.name.toLowerCase().endsWith(".zip"))) {
+        alert("Please upload one or more .zip files containing images.");
         return;
     }
     uploadProgressContainer.style.display = "block";
     try {
-        const job = await uploadImages(file, (pct) => {
+        const job = await uploadZipFiles(files, (pct) => {
             uploadProgressFill.style.width = `${pct}%`;
             uploadProgressText.textContent = `Uploading: ${pct.toFixed(0)}%`;
+        }, (stage) => {
+            uploadProgressText.textContent = stage;
         });
         uploadProgressContainer.style.display = "none";
         uploadProgressFill.style.width = "0%";

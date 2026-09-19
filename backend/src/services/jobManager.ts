@@ -34,7 +34,9 @@ export async function startTrainingJob(jobId: string, uploadsDir: string): Promi
   const callbackUrl = `${BACKEND_PUBLIC_URL}/internal/worker/callback`;
   const filename = path.basename(job.imagesPath);
   const isRemoteBackend = BACKEND_PUBLIC_URL.startsWith("http://") || BACKEND_PUBLIC_URL.startsWith("https://");
-  const imagesPath = isRemoteBackend && !BACKEND_PUBLIC_URL.includes("localhost")
+  const imagesPath = /^https?:\/\//i.test(job.imagesPath)
+    ? job.imagesPath
+    : isRemoteBackend && !BACKEND_PUBLIC_URL.includes("localhost")
     ? `${BACKEND_PUBLIC_URL}/uploads/${encodeURIComponent(filename)}`
     : (path.isAbsolute(job.imagesPath) ? job.imagesPath : path.join(uploadsDir, filename));
 
