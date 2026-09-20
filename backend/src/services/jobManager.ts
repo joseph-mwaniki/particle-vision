@@ -1,6 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import { appendJobLog, getJob, updateJob } from "../db";
+import { presignDownload } from "./objectStorage";
 import { dispatchTrainingJob } from "./workerClient";
 import { WorkerCallbackPayload } from "../types/job";
 
@@ -34,7 +35,9 @@ export async function startTrainingJob(jobId: string, uploadsDir: string): Promi
   const callbackUrl = `${BACKEND_PUBLIC_URL}/internal/worker/callback`;
   const filename = path.basename(job.imagesPath);
   const isRemoteBackend = BACKEND_PUBLIC_URL.startsWith("http://") || BACKEND_PUBLIC_URL.startsWith("https://");
-  const imagesPath = /^https?:\/\//i.test(job.imagesPath)
+  const imagesPath = job.imagesPath.startsWith("datasets/")
+    ? await presignDownload(job.imagesPath)
+    : /^https?:\/\//i.test(job.imagesPath)
     ? job.imagesPath
     : isRemoteBackend && !BACKEND_PUBLIC_URL.includes("localhost")
     ? `${BACKEND_PUBLIC_URL}/uploads/${encodeURIComponent(filename)}`

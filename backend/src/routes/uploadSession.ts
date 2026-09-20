@@ -57,8 +57,7 @@ async function assembleAndStart(sessionId: string, uploadsDir: string) {
     const imageCount = await assembleZip(sessionId, session.files, combinedKey, (message) => {
       console.log(`[upload-session:${sessionId}] ${message}`);
     });
-    const downloadUrl = await presignDownload(combinedKey);
-    const job = await createJob(downloadUrl);
+    const job = await createJob(combinedKey);
     await database.job.update({ where: { id: job.id }, data: { uploadSessionId: sessionId } });
     await database.uploadSession.update({
       where: { id: sessionId },
