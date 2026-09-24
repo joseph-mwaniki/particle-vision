@@ -5,7 +5,7 @@ export default defineConfig({
     port: 5173,
     proxy: {
       "/api": {
-        target: "https://particle-vision-backend.onrender.com/",
+        target: process.env.VITE_DEV_API_TARGET || "http://localhost:3001",
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api/, ""),
       },

@@ -25,7 +25,7 @@ BACKEND_UPLOADS_DIR = Path(os.getenv("BACKEND_UPLOADS_DIR", str(WORK_DIR / "uplo
 
 # Backend callback
 BACKEND_CALLBACK_URL = os.getenv(
-    "BACKEND_CALLBACK_URL", "https://particle-vision-backend.onrender.com"
+    "BACKEND_CALLBACK_URL", "https://disco-public-type-two.trycloudflare.com/"
 )
 
 # Training defaults
