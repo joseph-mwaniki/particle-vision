@@ -1,25 +1,25 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
-generator client {
-  provider = "prisma-client-js"
-}
-
 model Job {
-  id            String    @id @default(cuid())
-  status        String
-  progress      Float     @default(0.0)
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
-  imagesPath    String
-  splatPath     String?
-  collisionPath String?
-  logs          String?   @db.Text
-  uploadSessionId String?  @unique
-  uploadSession UploadSession? @relation(fields: [uploadSessionId], references: [id], onDelete: SetNull)
-  Splats        Splat[]
+  id              String         @id @default(cuid())
+  status          String
+  progress        Float          @default(0.0)
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  imagesPath      String
+  splatPath       String?
+  collisionPath   String?
+  logs            String?
+  uploadSessionId String?        @unique
+  uploadSession   UploadSession? @relation(fields: [uploadSessionId], references: [id])
+  Splats          Splat[]
 }
 
 model UploadSession {
@@ -30,11 +30,11 @@ model UploadSession {
   totalFiles       Int          @default(0)
   storagePrefix    String
   combinedKey      String?
-  job              Job?
-  files            UploadFile[]
   createdAt        DateTime     @default(now())
   updatedAt        DateTime     @updatedAt
   expiresAt        DateTime
+  job              Job?
+  files            UploadFile[]
 
   @@index([status])
   @@index([expiresAt])
@@ -43,7 +43,6 @@ model UploadSession {
 model UploadFile {
   id             String        @id
   sessionId      String
-  session        UploadSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
   originalName   String
   objectKey      String        @unique
   size           BigInt
@@ -54,6 +53,7 @@ model UploadFile {
   status         String        @default("UPLOADING")
   createdAt      DateTime      @default(now())
   completedAt    DateTime?
+  session        UploadSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 
   @@index([sessionId])
 }
@@ -62,7 +62,7 @@ model Splat {
   id            String    @id @default(uuid())
   title         String
   slug          String    @unique
-  description   String?   @db.Text
+  description   String?
   status        String    @default("draft")
   splatPath     String
   collisionPath String?
@@ -74,9 +74,8 @@ model Splat {
   publishedAt   DateTime?
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
-
   jobId         String?
-  Job           Job?      @relation(fields: [jobId], references: [id], onDelete: SetNull)
+  Job           Job?      @relation(fields: [jobId], references: [id])
 
   @@index([slug])
   @@index([status])
