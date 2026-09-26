@@ -1,6 +1,6 @@
 import { Router, Request, Response } from "express";
 import crypto from "crypto";
-import { prisma, createJob, updateJob } from "../db";
+import { prisma } from "../db";
 import {
   abortMultipartUpload,
   completeMultipartUpload,
@@ -43,7 +43,7 @@ function isZipName(name: string) {
   return name.toLowerCase().endsWith(".zip");
 }
 
-async function assembleAndStart(sessionId: string, uploadsDir: string) {
+async function assembleAndStart(sessionId: string) {
   const database = requireDatabase();
   const session = await database.uploadSession.findUnique({
     where: { id: sessionId },
@@ -57,13 +57,29 @@ async function assembleAndStart(sessionId: string, uploadsDir: string) {
     const imageCount = await assembleZip(sessionId, session.files, combinedKey, (message) => {
       console.log(`[upload-session:${sessionId}] ${message}`);
     });
-    const job = await createJob(combinedKey);
-    await database.job.update({ where: { id: job.id }, data: { uploadSessionId: sessionId } });
-    await database.uploadSession.update({
-      where: { id: sessionId },
-      data: { status: "ASSEMBLED", combinedKey, totalSize: session.files.reduce((sum: bigint, file: any) => sum + BigInt(file.size), 0n) },
+    const jobId = `job_${Math.random().toString(36).substring(2, 11)}`;
+    const now = new Date();
+    const logs = `[${now.toISOString()}] Job created. Upload complete. Ready to train.\nCombined ${imageCount} images from ${session.files.length} ZIP files.`;
+    await database.$transaction(async (transaction) => {
+      await transaction.job.create({
+        data: {
+          id: jobId,
+          status: "PENDING",
+          progress: 0,
+          imagesPath: combinedKey,
+          uploadSessionId: sessionId,
+          logs,
+        },
+      });
+      await transaction.uploadSession.update({
+        where: { id: sessionId },
+        data: {
+          status: "ASSEMBLED",
+          combinedKey,
+          totalSize: session.files.reduce((sum: bigint, file: any) => sum + BigInt(file.size), 0n),
+        },
+      });
     });
-    await updateJob(job.id, { logs: `${job.logs || ""}\nCombined ${imageCount} images from ${session.files.length} ZIP files.` });
   } catch (error) {
     await database.uploadSession.update({ where: { id: sessionId }, data: { status: "FAILED" } }).catch(() => undefined);
     throw error;
@@ -152,7 +168,7 @@ export function createUploadSessionRouter(uploadsDir: string): Router {
       if (!session.files.length || session.files.some((file: any) => file.status !== "COMPLETE")) return res.status(400).json({ error: "All ZIP files must finish uploading first" });
       if (session.status !== "UPLOADING") return res.status(400).json({ error: `Session is already ${session.status}` });
       await database.uploadSession.update({ where: { id: session.id }, data: { status: "ASSEMBLING" } });
-      void assembleAndStart(session.id, uploadsDir).catch((error) => console.error(`[upload-session:${session.id}] assembly failed`, error));
+      void assembleAndStart(session.id).catch((error) => console.error(`[upload-session:${session.id}] assembly failed`, error));
       res.status(202).json({ id: session.id, status: "ASSEMBLING" });
     } catch (error) {
       res.status(500).json({ error: error instanceof Error ? error.message : "Failed to complete upload session" });
