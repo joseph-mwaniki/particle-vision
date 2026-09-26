@@ -19,7 +19,10 @@ import { createUploadSessionRouter } from "./routes/uploadSession";
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-const uploadsDir = path.join(__dirname, "../uploads");
+const uploadsDir = process.env.VERCEL
+  ? path.join("/tmp", "uploads")
+  : path.join(__dirname, "../uploads");
+
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
 }
@@ -151,15 +154,19 @@ app.use((err: Error, _req: express.Request, res: express.Response, _next: expres
   res.status(500).json({ error: err.message || "Internal server error" });
 });
 
-app.listen(PORT, () => {
-  console.log(`Backend API running at http://localhost:${PORT}`);
-  console.log(`  GET  /health`);
-  console.log(`  POST /upload`);
-  console.log(`  POST /train`);
-  console.log(`  GET  /job/:id`);
-  console.log(`  GET  /splats (list showcase splats)`);
-  console.log(`  GET  /splats/:identifier (get splat by id, slug, or shareToken)`);
-  console.log(`  POST /splats (create draft splat)`);
-  console.log(`  POST /splats/:id/publish (publish / unpublish splat)`);
-  console.log(`Static uploads: http://localhost:${PORT}/uploads`);
-});
+if (process.env.NODE_ENV !== "production") {
+  app.listen(PORT, () => {
+    console.log(`Backend API running at http://localhost:${PORT}`);
+    console.log(`  GET  /health`);
+    console.log(`  POST /upload`);
+    console.log(`  POST /train`);
+    console.log(`  GET  /job/:id`);
+    console.log(`  GET  /splats (list showcase splats)`);
+    console.log(`  GET  /splats/:identifier (get splat by id, slug, or shareToken)`);
+    console.log(`  POST /splats (create draft splat)`);
+    console.log(`  POST /splats/:id/publish (publish / unpublish splat)`);
+    console.log(`Static uploads: http://localhost:${PORT}/uploads`);
+  });
+}
+
+export default app;
