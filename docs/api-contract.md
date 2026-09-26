@@ -17,31 +17,11 @@ Health check.
 }
 ```
 
-### POST /upload
+### Direct multipart upload to R2
 
-Upload a ZIP file containing images.
+The browser creates an upload session, requests presigned multipart-part URLs, uploads file chunks directly to R2, and posts only ETags and completion metadata to the backend. The backend records R2 object keys in `UploadFile`; it never receives the ZIP bytes. Session completion creates a job linked to those source-file records and does not assemble or copy ZIPs.
 
-**Request:** `multipart/form-data`
-- Field: `images` (file, `.zip` only, max 500 MB)
-
-**Response `201`:**
-```json
-{
-  "id": "job_abc123def",
-  "status": "PENDING",
-  "progress": 0,
-  "createdAt": "2026-07-15T12:00:00.000Z",
-  "updatedAt": "2026-07-15T12:00:00.000Z",
-  "imagesPath": "uploads/1234567890-photos.zip",
-  "splatPath": null,
-  "collisionPath": null,
-  "logs": "[2026-07-15T12:00:00.000Z] Job created. Upload complete. Ready to train."
-}
-```
-
-**Errors:**
-- `400` — No file, wrong format
-- `500` — Server error
+The existing endpoints are `POST /api/upload-session`, `POST /api/upload-session/:id/file`, `POST /api/upload-session/:id/file/:fileId/complete`, `POST /api/upload-session/:id/complete`, and `GET /api/upload-session/:id`.
 
 ### POST /train
 
@@ -106,7 +86,13 @@ Accept a training job.
 ```json
 {
   "job_id": "job_abc123def",
-  "images_path": "/workspace/data/uploads/1234567890-photos.zip",
+  "source_files": [
+    { "download_url": "<presigned R2 GET URL>", "original_name": "photos.zip" }
+  ],
+  "output_uploads": {
+    "splat": { "key": "splats/job_abc123def/scene.splat", "url": "<presigned R2 PUT URL>" },
+    "collision": { "key": "splats/job_abc123def/collision.glb", "url": "<presigned R2 PUT URL>" }
+  },
   "callback_url": "http://localhost:3001/internal/worker/callback"
 }
 ```
@@ -138,8 +124,8 @@ GPU worker reports progress. Not called by frontend.
   "status": "PROCESSING_GSPLAT",
   "progress": 40,
   "log": "[gsplat] Placeholder: optimization loop",
-  "splat_path": "/uploads/jobs/job_abc123def/output/scene.splat",
-  "collision_path": "/uploads/jobs/job_abc123def/output/collision.glb",
+  "splat_key": "splats/job_abc123def/scene.splat",
+  "collision_key": "splats/job_abc123def/collision.glb",
   "error": "optional error message on FAILED"
 }
 ```
@@ -168,14 +154,14 @@ GPU worker reports progress. Not called by frontend.
 
 ## Asset URLs
 
-Completed jobs expose assets via static file serving:
+Completed jobs store R2 object keys and API responses include a signed viewer URL (or the configured public delivery URL):
 
 | Asset | Path | Viewer |
 |-------|------|--------|
-| Splat scene | `/uploads/jobs/{id}/output/scene.splat` | Visible (gsplat.js) |
-| Collision mesh | `/uploads/jobs/{id}/output/collision.glb` | Invisible (future) |
+| Splat scene | `splats/{id}/scene.splat` | Visible (gsplat.js) |
+| Collision mesh | `splats/{id}/collision.glb` | Invisible (future) |
 
-Frontend loads via: `{API_BASE}/uploads/jobs/{id}/output/scene.splat`
+The browser downloads binary assets from R2, not through the API. API responses keep the stable object key in `splatPath`/`collisionPath` and provide ephemeral `splatUrl`/`collisionUrl` fields for viewing.
 
 ## RunPod Serverless
 

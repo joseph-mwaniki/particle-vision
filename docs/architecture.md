@@ -5,15 +5,14 @@
 Remote View is a monorepo with three independent services connected through documented HTTP interfaces.
 
 ```
-┌─────────────┐     REST API      ┌─────────────┐    HTTP + callback    ┌─────────────┐
-│   Frontend  │ ◄──────────────► │   Backend   │ ◄──────────────────► │ GPU Worker  │
-│  (gsplat.js)│                   │  (Express)  │                       │  (Python)   │
-└─────────────┘                   └─────────────┘                       └─────────────┘
-      │                                  │                                     │
-      │ loads scene.splat                │ stores jobs.json                    │ placeholder
-      │ loads collision.glb (future)     │ serves /uploads/*                   │ pipeline
-      ▼                                  ▼                                     ▼
-  WebGL Viewer                      Local filesystem                      /workspace/data
+Browser ──direct multipart PUT──► Cloudflare R2 ◄──signed PUT── GPU Worker
+      │                                   ▲                         │
+      │ API metadata / signed URLs        │ signed GET              │ temporary WORK_DIR
+      ▼                                   │                         ▼
+Vercel API ──Postgres metadata──► Neon/Postgres          COLMAP + gsplat
+      ▲                                                             │
+      └──────────────────── status/key callback ────────────────────┘
+Browser ◄──────────── signed/public R2 asset URLs ───────────────┘
 ```
 
 ## Components
@@ -21,22 +20,21 @@ Remote View is a monorepo with three independent services connected through docu
 ### Frontend (`frontend/`)
 
 - **Stack:** Vite 7, TypeScript 5.8, gsplat.js 1.2.9
-- **Role:** Upload images, monitor jobs, view 3D splats
+- **Role:** Upload ZIP parts directly to R2, monitor jobs, view 3D splats directly from R2
 - **Viewer:** `SplatViewer` class wraps gsplat.js Scene/Camera/Renderer
 - **Assets:** `scene.splat` (visible), `collision.glb` (invisible, future)
 
 ### Backend (`backend/`)
 
 - **Stack:** Express 4, TypeScript 5.4, Node 20+
-- **Role:** Job CRUD, file upload, worker dispatch, callback handling
-- **Storage:** JSON file (`jobs.json`) + disk uploads (`uploads/`)
-- **No:** Database, auth, payments, queues
+- **Role:** Upload-session metadata, job CRUD, R2 signed URL generation, worker dispatch, callback handling
+- **Storage:** Neon/Postgres metadata and R2 object keys; no persistent binary storage
+- **No:** Authentication, payments, background queues
 
 ### GPU Worker (`gpu-worker/`)
 
-- **Stack:** Python 3.10, stdlib HTTP server (placeholder)
-- **Role:** Accept training jobs, run pipeline, callback progress
-- **Future stack:** PyTorch 2.10 + CUDA 12.8 + gsplat 1.5.3 + COLMAP
+- **Stack:** Python 3.10, HTTP handler, PyTorch/CUDA, gsplat, COLMAP
+- **Role:** Download source archives from R2, process in temporary local storage, upload generated assets directly to R2, callback with metadata
 - **Deployment:** Docker container, RunPod serverless handler
 
 ### Vendored Libraries
@@ -50,14 +48,14 @@ Remote View is a monorepo with three independent services connected through docu
 
 ### Upload → Train → View
 
-1. User uploads ZIP via frontend `POST /upload`
-2. Backend creates job (`status: PENDING`), stores ZIP in `uploads/`
-3. User clicks "Start Training" → frontend `POST /train`
-4. Backend dispatches `POST {GPU_WORKER_URL}/run`
-5. Worker runs placeholder pipeline, sends callbacks to `/internal/worker/callback`
-6. Backend updates job status/progress in `jobs.json`
-7. Frontend polls `GET /job/:id` every 2 seconds
-8. On `COMPLETED`, frontend loads `scene.splat` via gsplat.js `Loader.LoadAsync()`
+1. Browser requests an upload session and multipart presigned URLs from the API
+2. Browser uploads ZIP parts directly to R2; the API stores object-key and completion metadata in Postgres
+3. API creates a job linked to the source object keys (`status: PENDING`)
+4. User clicks "Start Training" → frontend `POST /train`
+5. Backend dispatches signed source GET URLs and output PUT URLs to the GPU worker
+6. Worker downloads source ZIPs to temporary `WORK_DIR`, runs the pipeline, uploads generated files directly to R2, then deletes its job directory
+7. Worker callbacks report status and R2 keys; backend persists metadata in Postgres
+8. Frontend polls job status and loads assets directly from signed or public R2 URLs
 
 ### Collision Mesh (future)
 
@@ -73,7 +71,7 @@ All pipeline functions live in `gpu-worker/pipeline/`:
 | `train_gsplat()` | COLMAP sparse | trained PLY | Placeholder |
 | `generate_collision_mesh()` | dense mesh | collision.glb | Placeholder |
 | `convert_to_splat()` | PLY | scene.splat | Placeholder |
-| `upload_results()` | assets | callback payload | Placeholder |
+| `upload_results()` | temporary assets + signed PUT URLs | R2 object keys | Direct worker-to-R2 upload |
 
 ## Job Status Machine
 

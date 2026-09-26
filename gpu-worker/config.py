@@ -19,14 +19,6 @@ USE_MOCK = os.getenv("USE_MOCK", "false").lower() in ("1", "true", "yes")
 
 # Paths
 WORK_DIR = Path(os.getenv("WORK_DIR", "/workspace/data"))
-UPLOAD_DIR = WORK_DIR / "uploads"
-OUTPUT_DIR = WORK_DIR / "output"
-BACKEND_UPLOADS_DIR = Path(os.getenv("BACKEND_UPLOADS_DIR", str(WORK_DIR / "uploads")))
-
-# Backend callback
-BACKEND_CALLBACK_URL = os.getenv(
-    "BACKEND_CALLBACK_URL", "https://carrying-lambda-bulk-incidents.trycloudflare.com/"
-)
 
 # Training defaults
 GSPLAT_STEPS = int(os.getenv("GSPLAT_STEPS", "7000"))

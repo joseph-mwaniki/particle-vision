@@ -31,7 +31,6 @@ docker push your-registry/remote-view-worker:latest
 
 | Variable | Value |
 |----------|-------|
-| `BACKEND_CALLBACK_URL` | `https://your-api.com/internal/worker/callback` |
 | `WORK_DIR` | `/workspace/data` |
 | `GSPLAT_STEPS` | `7000` |
 
@@ -59,14 +58,27 @@ PORT=3001
 GPU_WORKER_URL=https://api.runpod.ai/v2/{endpoint_id}/run
 BACKEND_PUBLIC_URL=https://your-api.com
 USE_MOCK_WORKER=false
+S3_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com
+S3_REGION=auto
+S3_ACCESS_KEY_ID=<server-side key>
+S3_SECRET_ACCESS_KEY=<server-side secret>
+S3_BUCKET=<bucket>
 ```
+
+R2 credentials stay on the backend. It sends the worker short-lived signed GET and PUT URLs, so the worker does not need bucket credentials.
 
 The backend dispatches jobs via `POST {GPU_WORKER_URL}/run` with:
 
 ```json
 {
   "job_id": "job_abc123",
-  "images_path": "/uploads/photos.zip",
+    "source_files": [
+        { "download_url": "<presigned R2 GET URL>", "original_name": "photos.zip" }
+    ],
+    "output_uploads": {
+        "splat": { "key": "splats/job_abc123/scene.splat", "url": "<presigned R2 PUT URL>" },
+        "collision": { "key": "splats/job_abc123/collision.glb", "url": "<presigned R2 PUT URL>" }
+    },
   "callback_url": "https://your-api.com/internal/worker/callback"
 }
 ```
@@ -90,7 +102,11 @@ def runpod_handler(event: dict) -> dict:
     """
     event = {
         "job_id": str,
-        "images_path": str,
+        "source_files": [{"download_url": str, "original_name": str}],
+        "output_uploads": {
+            "splat": {"key": str, "url": str},
+            "collision": {"key": str, "url": str},
+        },
         "callback_url": str
     }
     returns {"job_id": str, "status": "accepted"}
@@ -109,17 +125,11 @@ The handler starts pipeline processing in a background thread and returns immedi
 - [ ] Test upload → train → callback → view flow
 - [ ] Implement real pipeline functions (currently placeholders)
 - [ ] Switch Docker image to CUDA base with gsplat deps
-- [ ] Configure persistent storage for uploads/outputs
+- [ ] Configure R2 bucket CORS for frontend `PUT`, `GET`, and `HEAD`; expose `ETag`, `Content-Length`, and `Accept-Ranges`
 
 ## Storage Considerations
 
-Current implementation uses local disk (`backend/uploads/`). For production:
-
-- Use S3/object storage for uploaded ZIPs and output assets
-- Worker needs access to input images (shared volume or pre-signed URLs)
-- Output `scene.splat` and `collision.glb` should be uploaded to object storage
-
-These are future enhancements — not part of the integration layer.
+R2 stores source ZIPs and generated assets. Neon/Postgres stores upload-session, job, and object-key metadata. The GPU worker downloads source ZIPs into `WORK_DIR/jobs/{job_id}`, performs extraction/COLMAP/gsplat locally, uploads generated assets directly to R2, then removes its temporary job directory. Vercel is only the API/control plane and never proxies the large source or output binaries.
 
 ## Estimated GPU Requirements (Future)
 

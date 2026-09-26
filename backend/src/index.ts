@@ -1,13 +1,9 @@
 import express from "express";
 import cors from "cors";
-import multer from "multer";
-import * as path from "path";
-import * as fs from "fs";
 import * as dotenv from "dotenv";
 
 dotenv.config();
 
-import { handleUpload } from "./routes/upload";
 import { createTrainRouter } from "./routes/train";
 import { createJobRouter } from "./routes/job";
 import { createHealthRouter } from "./routes/health";
@@ -19,46 +15,8 @@ import { createUploadSessionRouter } from "./routes/uploadSession";
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-const uploadsDir = process.env.VERCEL
-  ? path.join("/tmp", "uploads")
-  : path.join(__dirname, "../uploads");
-
-if (!fs.existsSync(uploadsDir)) {
-  fs.mkdirSync(uploadsDir, { recursive: true });
-}
-
 app.use(cors());
 app.use(express.json());
-app.use("/uploads", express.static(uploadsDir));
-app.use("/api/uploads", express.static(uploadsDir));
-
-// Also serve sample splats if available
-const samplesDir = path.join(__dirname, "../../frontend/public/samples");
-if (fs.existsSync(samplesDir)) {
-  app.use("/samples", express.static(samplesDir));
-  app.use("/api/samples", express.static(samplesDir));
-}
-
-const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => cb(null, uploadsDir),
-  filename: (_req, file, cb) => {
-    const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
-    const safeName = file.originalname.replace(/\s+/g, "_").replace(/[^a-zA-Z0-9._-]/g, "");
-    cb(null, `${uniqueSuffix}-${safeName}`);
-  },
-});
-
-const upload = multer({
-  storage,
-  limits: { fileSize: 500 * 1024 * 1024 },
-  fileFilter: (_req, file, cb) => {
-    if (path.extname(file.originalname).toLowerCase() === ".zip") {
-      cb(null, true);
-    } else {
-      cb(new Error("Only .zip files are supported"));
-    }
-  },
-});
 
 // Optional API Key validation helper
 export function requireApiKey(req: express.Request, res: express.Response, next: express.NextFunction) {
@@ -89,19 +47,12 @@ app.use("/api/job", jobRouter);
 app.use("/api/splat", splatRouter);
 app.use("/api/splats", splatRouter);
 
-const uploadSessionRouter = createUploadSessionRouter(uploadsDir);
+const uploadSessionRouter = createUploadSessionRouter();
 app.use("/upload-session", uploadSessionRouter);
 app.use("/api/upload-session", uploadSessionRouter);
 
-app.post("/upload", upload.single("images"), (req, res) => {
-  handleUpload(req, res);
-});
-app.post("/api/upload", upload.single("images"), (req, res) => {
-  handleUpload(req, res);
-});
-
-app.use("/train", createTrainRouter(uploadsDir));
-app.use("/api/train", createTrainRouter(uploadsDir));
+app.use("/train", createTrainRouter());
+app.use("/api/train", createTrainRouter());
 
 // Internal: GPU worker callbacks
 app.post("/internal/worker/callback", async (req, res) => {
@@ -111,7 +62,7 @@ app.post("/internal/worker/callback", async (req, res) => {
       return res.status(400).json({ error: validation.error });
     }
 
-    await handleWorkerCallback(req.body, uploadsDir);
+    await handleWorkerCallback(req.body);
     res.json({ received: true });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Callback processing failed";
@@ -119,38 +70,7 @@ app.post("/internal/worker/callback", async (req, res) => {
   }
 });
 
-// Internal: Remote GPU worker direct output upload
-const resultStorage = multer.diskStorage({
-  destination: (req, _file, cb) => {
-    const jobOutputDir = path.join(uploadsDir, "jobs", req.params.jobId, "output");
-    fs.mkdirSync(jobOutputDir, { recursive: true });
-    cb(null, jobOutputDir);
-  },
-  filename: (_req, file, cb) => {
-    cb(null, file.originalname);
-  },
-});
-const resultUpload = multer({ storage: resultStorage, limits: { fileSize: 500 * 1024 * 1024 } });
-
-app.post(
-  "/internal/worker/upload-result/:jobId",
-  resultUpload.fields([
-    { name: "splat", maxCount: 1 },
-    { name: "collision", maxCount: 1 },
-  ]),
-  (_req, res) => {
-    res.json({ success: true });
-  }
-);
-
-
 app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
-  if (err instanceof multer.MulterError) {
-    return res.status(400).json({ error: err.message });
-  }
-  if (err.message === "Only .zip files are supported") {
-    return res.status(400).json({ error: err.message });
-  }
   res.status(500).json({ error: err.message || "Internal server error" });
 });
 
@@ -158,14 +78,12 @@ if (process.env.NODE_ENV !== "production") {
   app.listen(PORT, () => {
     console.log(`Backend API running at http://localhost:${PORT}`);
     console.log(`  GET  /health`);
-    console.log(`  POST /upload`);
     console.log(`  POST /train`);
     console.log(`  GET  /job/:id`);
     console.log(`  GET  /splats (list showcase splats)`);
     console.log(`  GET  /splats/:identifier (get splat by id, slug, or shareToken)`);
     console.log(`  POST /splats (create draft splat)`);
     console.log(`  POST /splats/:id/publish (publish / unpublish splat)`);
-    console.log(`Static uploads: http://localhost:${PORT}/uploads`);
   });
 }
 

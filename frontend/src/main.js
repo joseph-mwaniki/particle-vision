@@ -294,9 +294,9 @@ async function selectSplatById(id) {
     updateActiveSceneHeader();
     renderSplatsList();
     const v = initViewer();
-    await v.loadSplat(assetUrl(splat.splatPath));
+    await v.loadSplat(splat.splatUrl || assetUrl(splat.splatPath));
     if (splat.collisionPath) {
-        await v.loadCollisionMesh(assetUrl(splat.collisionPath));
+        await v.loadCollisionMesh(splat.collisionUrl || assetUrl(splat.collisionPath));
     }
 }
 function updateActiveSceneHeader() {
@@ -663,9 +663,9 @@ async function selectJob(jobId) {
     if (job.status === "COMPLETED" && job.splatPath) {
         currentLoadedPath = job.splatPath;
         const v = initViewer();
-        await v.loadSplat(assetUrl(job.splatPath));
+        await v.loadSplat(job.splatUrl || assetUrl(job.splatPath));
         if (job.collisionPath) {
-            await v.loadCollisionMesh(assetUrl(job.collisionPath));
+            await v.loadCollisionMesh(job.collisionUrl || assetUrl(job.collisionPath));
         }
     }
     else if (job.status === "FAILED") {
@@ -805,7 +805,7 @@ async function checkUrlRouting() {
                 // Enable presentation mode directly for client view
                 setClientMode(true);
                 const v = initViewer();
-                await v.loadSplat(assetUrl(splat.splatPath));
+                await v.loadSplat(splat.splatUrl || assetUrl(splat.splatPath));
                 return true;
             }
         }

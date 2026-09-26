@@ -7,10 +7,8 @@ import {
   createMultipartUpload,
   deleteObject,
   objectStorageConfigured,
-  presignDownload,
   presignUploadPart,
 } from "../services/objectStorage";
-import { assembleZip } from "../services/zipAssembler";
 
 const MAX_FILES = Number(process.env.MAX_UPLOAD_FILES || 20);
 const MAX_FILE_SIZE = Number(process.env.MAX_UPLOAD_FILE_SIZE || 5 * 1024 * 1024 * 1024);
@@ -43,50 +41,39 @@ function isZipName(name: string) {
   return name.toLowerCase().endsWith(".zip");
 }
 
-async function assembleAndStart(sessionId: string) {
+async function createJobForSession(sessionId: string) {
   const database = requireDatabase();
   const session = await database.uploadSession.findUnique({
     where: { id: sessionId },
     include: { files: true },
   });
   if (!session) throw new Error("Upload session not found");
-
-  try {
-    const combinedKey = `datasets/${sessionId}/combined.zip`;
-    await database.uploadSession.update({ where: { id: sessionId }, data: { status: "ASSEMBLING" } });
-    const imageCount = await assembleZip(sessionId, session.files, combinedKey, (message) => {
-      console.log(`[upload-session:${sessionId}] ${message}`);
+  const jobId = `job_${crypto.randomUUID().replace(/-/g, "").slice(0, 12)}`;
+  const now = new Date();
+  await database.$transaction(async (transaction) => {
+    const claimed = await transaction.uploadSession.updateMany({
+      where: { id: sessionId, status: "UPLOADING" },
+      data: { status: "ASSEMBLING" },
     });
-    const jobId = `job_${Math.random().toString(36).substring(2, 11)}`;
-    const now = new Date();
-    const logs = `[${now.toISOString()}] Job created. Upload complete. Ready to train.\nCombined ${imageCount} images from ${session.files.length} ZIP files.`;
-    await database.$transaction(async (transaction) => {
-      await transaction.job.create({
-        data: {
-          id: jobId,
-          status: "PENDING",
-          progress: 0,
-          imagesPath: combinedKey,
-          uploadSessionId: sessionId,
-          logs,
-        },
-      });
-      await transaction.uploadSession.update({
-        where: { id: sessionId },
-        data: {
-          status: "ASSEMBLED",
-          combinedKey,
-          totalSize: session.files.reduce((sum: bigint, file: any) => sum + BigInt(file.size), 0n),
-        },
-      });
+    if (claimed.count !== 1) throw new Error("Upload session is already being finalized");
+    await transaction.job.create({
+      data: {
+        id: jobId,
+        status: "PENDING",
+        progress: 0,
+        imagesPath: session.files[0].objectKey,
+        uploadSessionId: sessionId,
+        logs: `[${now.toISOString()}] Job created. Source files are stored in object storage. Ready to train.`,
+      },
     });
-  } catch (error) {
-    await database.uploadSession.update({ where: { id: sessionId }, data: { status: "FAILED" } }).catch(() => undefined);
-    throw error;
-  }
+    await transaction.uploadSession.update({
+      where: { id: sessionId },
+      data: { status: "ASSEMBLED", combinedKey: null },
+    });
+  });
 }
 
-export function createUploadSessionRouter(uploadsDir: string): Router {
+export function createUploadSessionRouter(): Router {
   const router = Router();
 
   router.post("/", async (req: Request, res: Response) => {
@@ -167,9 +154,8 @@ export function createUploadSessionRouter(uploadsDir: string): Router {
       if (!session) return res.status(404).json({ error: "Upload session not found" });
       if (!session.files.length || session.files.some((file: any) => file.status !== "COMPLETE")) return res.status(400).json({ error: "All ZIP files must finish uploading first" });
       if (session.status !== "UPLOADING") return res.status(400).json({ error: `Session is already ${session.status}` });
-      await database.uploadSession.update({ where: { id: session.id }, data: { status: "ASSEMBLING" } });
-      void assembleAndStart(session.id).catch((error) => console.error(`[upload-session:${session.id}] assembly failed`, error));
-      res.status(202).json({ id: session.id, status: "ASSEMBLING" });
+      await createJobForSession(session.id);
+      res.status(202).json({ id: session.id, status: "ASSEMBLED" });
     } catch (error) {
       res.status(500).json({ error: error instanceof Error ? error.message : "Failed to complete upload session" });
     }

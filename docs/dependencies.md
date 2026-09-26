@@ -24,13 +24,12 @@ All versions verified from source files in this repository. Do not guess — the
 |---------|---------|--------|
 | express | ^4.19.2 | `backend/package.json` |
 | typescript | ^5.4.5 | `backend/package.json` |
-| multer | ^1.4.5-lts.1 | `backend/package.json` |
 | cors | ^2.8.5 | `backend/package.json` |
 | dotenv | ^16.4.5 | `backend/package.json` |
 
-## GPU Worker (Placeholder)
+## GPU Worker
 
-The placeholder handler uses Python 3.10 stdlib only. No pip packages required.
+Worker dependencies, including `requests` for streaming signed uploads, are listed in `gpu-worker/requirements.txt`. R2 credentials remain on the backend; the worker uses signed URLs.
 
 ## gsplat Training Dependencies (Future)
 

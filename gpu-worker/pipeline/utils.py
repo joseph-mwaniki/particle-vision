@@ -1,10 +1,12 @@
 """Shared pipeline utilities."""
 
 import logging
+import re
 import shutil
 import subprocess
 import zipfile
 from pathlib import Path
+from pathlib import PurePosixPath
 from typing import Callable, Optional
 
 logger = logging.getLogger(__name__)
@@ -18,33 +20,38 @@ def ensure_dir(path: Path) -> Path:
 
 
 def extract_images_zip(zip_path: Path, dest_dir: Path, on_log: Optional[LogFn] = None) -> Path:
-    """Extract uploaded ZIP to dest_dir/images/."""
+    """Extract one uploaded ZIP to dest_dir/images/."""
+    return extract_images_zips([zip_path], dest_dir, on_log=on_log)
+
+
+def extract_images_zips(zip_paths: list[Path], dest_dir: Path, on_log: Optional[LogFn] = None) -> Path:
+    """Extract image files from source archives into isolated temporary folders."""
     images_dir = ensure_dir(dest_dir / "images")
-    if on_log:
-        on_log(f"Extracting {zip_path.name} to {images_dir}")
+    image_extensions = {".jpg", ".jpeg", ".png", ".webp", ".tif", ".tiff"}
+    image_count = 0
+    for index, zip_path in enumerate(zip_paths, start=1):
+        namespace = re.sub(r"[^a-zA-Z0-9_-]+", "-", zip_path.stem).strip("-")[:80]
+        source_dir = images_dir / f"{index:03d}-{namespace or 'source'}"
+        if on_log:
+            on_log(f"Extracting {zip_path.name} to {source_dir}")
+        with zipfile.ZipFile(zip_path, "r") as archive:
+            for entry in archive.infolist():
+                normalized = entry.filename.replace("\\", "/")
+                entry_path = PurePosixPath(normalized)
+                if entry.is_dir() or entry_path.is_absolute() or ".." in entry_path.parts:
+                    continue
+                if entry_path.suffix.lower() not in image_extensions:
+                    continue
+                destination = source_dir.joinpath(*entry_path.parts)
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                with archive.open(entry, "r") as source, destination.open("wb") as target:
+                    shutil.copyfileobj(source, target)
+                image_count += 1
 
-    with zipfile.ZipFile(zip_path, "r") as zf:
-        zf.extractall(images_dir)
-
-    # Flatten single top-level folder (common in photo ZIPs)
-    entries = [p for p in images_dir.iterdir() if not p.name.startswith(".")]
-    if len(entries) == 1 and entries[0].is_dir():
-        nested = entries[0]
-        flat_dir = ensure_dir(dest_dir / "images_flat")
-        for item in nested.iterdir():
-            shutil.move(str(item), str(flat_dir / item.name))
-        shutil.rmtree(images_dir)
-        flat_dir.rename(images_dir)
-
-    image_count = sum(
-        1
-        for p in images_dir.rglob("*")
-        if p.is_file() and p.suffix.lower() in {".jpg", ".jpeg", ".png", ".webp", ".tif", ".tiff"}
-    )
     if image_count == 0:
-        raise RuntimeError(f"No images found after extracting {zip_path}")
+        raise RuntimeError("No images found after extracting the uploaded ZIP files")
     if on_log:
-        on_log(f"Found {image_count} images in {images_dir}")
+        on_log(f"Extracted {image_count} images from {len(zip_paths)} ZIP file(s)")
     return images_dir
 
 

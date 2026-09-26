@@ -8,6 +8,7 @@ import {
   deleteSplat,
   incrementSplatViews,
 } from "../db";
+import { getObjectUrl } from "../services/objectStorage";
 
 function getBaseUrls(req: Request) {
   const frontendUrl =
@@ -17,14 +18,26 @@ function getBaseUrls(req: Request) {
   return { frontendUrl, backendUrl };
 }
 
-function formatSplatResponse(splat: any, req: Request) {
+async function formatSplatResponse(splat: any, req: Request) {
   const { frontendUrl } = getBaseUrls(req);
   const publicUrl = `${frontendUrl}/?view=${splat.slug}`;
   const previewDraftUrl = `${frontendUrl}/?view=${splat.slug}&token=${splat.shareToken}`;
   const embedCode = `<iframe src="${publicUrl}" width="100%" height="600" frameborder="0" allowfullscreen allow="accelerometer; gyroscope; vr"></iframe>`;
+  const usePublicDelivery = splat.status === "published" && splat.isPublic;
+  const assetUrl = (key: string | null) => {
+    if (!key) return Promise.resolve(null);
+    if (key.startsWith("/") || /^https?:\/\//i.test(key)) return Promise.resolve(key);
+    return getObjectUrl(key, usePublicDelivery);
+  };
+  const [splatUrl, collisionUrl] = await Promise.all([
+    assetUrl(splat.splatPath),
+    assetUrl(splat.collisionPath),
+  ]);
 
   return {
     ...splat,
+    splatUrl,
+    collisionUrl,
     publicUrl,
     previewDraftUrl,
     embedCode,
@@ -39,7 +52,7 @@ export function createSplatRouter(): Router {
     try {
       const onlyPublished = req.query.published === "true";
       const splats = await listSplats(onlyPublished);
-      res.json(splats.map((s) => formatSplatResponse(s, req)));
+      res.json(await Promise.all(splats.map((s) => formatSplatResponse(s, req))));
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Failed to list splats";
       res.status(500).json({ error: message });
@@ -77,7 +90,7 @@ export function createSplatRouter(): Router {
         incrementSplatViews(splat.id).catch(() => {});
       }
 
-      res.json(formatSplatResponse(splat, req));
+      res.json(await formatSplatResponse(splat, req));
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Failed to get splat";
       res.status(500).json({ error: message });
@@ -115,7 +128,7 @@ export function createSplatRouter(): Router {
         jobId,
       });
 
-      res.status(201).json(formatSplatResponse(splat, req));
+      res.status(201).json(await formatSplatResponse(splat, req));
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Failed to create splat";
       res.status(500).json({ error: message });
@@ -130,7 +143,7 @@ export function createSplatRouter(): Router {
       if (!updated) {
         return res.status(404).json({ error: "Splat not found" });
       }
-      res.json(formatSplatResponse(updated, req));
+      res.json(await formatSplatResponse(updated, req));
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Failed to update splat";
       res.status(500).json({ error: message });
@@ -152,7 +165,7 @@ export function createSplatRouter(): Router {
         return res.status(404).json({ error: "Splat not found" });
       }
 
-      const formatted = formatSplatResponse(updated, req);
+      const formatted = await formatSplatResponse(updated, req);
       res.json({
         message: status === "published" ? "Splat published successfully!" : "Splat unpublished to draft.",
         splat: formatted,

@@ -22,31 +22,6 @@ export async function getJob(id) {
         throw new Error(`Failed to get job: ${res.status}`);
     return res.json();
 }
-export async function uploadImages(file, onProgress) {
-    return new Promise((resolve, reject) => {
-        const formData = new FormData();
-        formData.append("images", file);
-        const xhr = new XMLHttpRequest();
-        xhr.open("POST", `${API_BASE}/upload`);
-        if (onProgress) {
-            xhr.upload.onprogress = (e) => {
-                if (e.lengthComputable) {
-                    onProgress((e.loaded / e.total) * 100);
-                }
-            };
-        }
-        xhr.onload = () => {
-            if (xhr.status === 201) {
-                resolve(JSON.parse(xhr.responseText));
-            }
-            else {
-                reject(new Error(xhr.responseText || `Upload failed: ${xhr.status}`));
-            }
-        };
-        xhr.onerror = () => reject(new Error("Network error during upload"));
-        xhr.send(formData);
-    });
-}
 function uploadPart(url, body, onProgress) {
     return new Promise((resolve, reject) => {
         const xhr = new XMLHttpRequest();
@@ -117,7 +92,7 @@ export async function uploadZipFiles(files, onProgress, onStage) {
             if (!completeResponse.ok)
                 throw new Error(await completeResponse.text());
         }
-        onStage?.("Combining files...");
+        onStage?.("Finalizing upload...");
         const completeResponse = await fetch(`${API_BASE}/upload-session/${session.id}/complete`, { method: "POST" });
         if (!completeResponse.ok)
             throw new Error(await completeResponse.text());
@@ -126,7 +101,7 @@ export async function uploadZipFiles(files, onProgress, onStage) {
             if (!statusResponse.ok)
                 throw new Error(await statusResponse.text());
             const status = await statusResponse.json();
-            onStage?.(status.status === "ASSEMBLED" ? "Files combined. Ready to start training." : "Combining files...");
+            onStage?.(status.status === "ASSEMBLED" ? "Upload complete. Ready to start training." : "Finalizing upload...");
             if (status.status === "FAILED")
                 throw new Error("Upload assembly failed. Check the backend logs for details.");
             if (status.status === "ASSEMBLED" && status.job)
@@ -229,6 +204,8 @@ export function assetUrl(path) {
     if (!path)
         return "";
     if (path.startsWith("http://") || path.startsWith("https://"))
+        return path;
+    if (path.startsWith("/samples/"))
         return path;
     if (path.startsWith("/"))
         return `${API_BASE}${path}`;

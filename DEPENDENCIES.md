@@ -84,9 +84,10 @@ Add the above lines to `~/.bashrc` if you installed CUDA in a custom location.
 # GPU worker — disable mock mode
 export USE_MOCK=false
 export GSPLAT_REPO_PATH=/path/to/remote-view/gsplat
-export BACKEND_UPLOADS_DIR=/path/to/remote-view/backend/uploads
 python gpu-worker/handler.py
 ```
+
+The worker uses `WORK_DIR` only for per-job temporary downloads and processing files. The backend supplies signed object URLs; no R2 credentials or backend uploads directory are needed on the worker.
 
 ---
 ### Next Steps

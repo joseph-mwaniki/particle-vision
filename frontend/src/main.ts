@@ -333,10 +333,10 @@ async function selectSplatById(id: string): Promise<void> {
   renderSplatsList();
 
   const v = initViewer();
-  await v.loadSplat(assetUrl(splat.splatPath));
+  await v.loadSplat(splat.splatUrl || assetUrl(splat.splatPath));
 
   if (splat.collisionPath) {
-    await v.loadCollisionMesh(assetUrl(splat.collisionPath));
+    await v.loadCollisionMesh(splat.collisionUrl || assetUrl(splat.collisionPath));
   }
 }
 
@@ -740,9 +740,9 @@ async function selectJob(jobId: string): Promise<void> {
   if (job.status === "COMPLETED" && job.splatPath) {
     currentLoadedPath = job.splatPath;
     const v = initViewer();
-    await v.loadSplat(assetUrl(job.splatPath));
+    await v.loadSplat(job.splatUrl || assetUrl(job.splatPath));
     if (job.collisionPath) {
-      await v.loadCollisionMesh(assetUrl(job.collisionPath));
+      await v.loadCollisionMesh(job.collisionUrl || assetUrl(job.collisionPath));
     }
   } else if (job.status === "FAILED") {
     viewerOverlayText.textContent = job.logs?.split("\n").filter((l) => l.includes("ERROR")).pop()?.replace(/^.*ERROR:\s*/, "") || "Training failed";
@@ -889,7 +889,7 @@ async function checkUrlRouting(): Promise<boolean> {
         setClientMode(true);
 
         const v = initViewer();
-        await v.loadSplat(assetUrl(splat.splatPath));
+        await v.loadSplat(splat.splatUrl || assetUrl(splat.splatPath));
         return true;
       }
     } catch (err: unknown) {

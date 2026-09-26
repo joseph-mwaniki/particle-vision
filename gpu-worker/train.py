@@ -2,12 +2,10 @@
 
 import logging
 import time
-import traceback
 from pathlib import Path
 from typing import Any, Callable, Optional
 
 from config import (
-    BACKEND_UPLOADS_DIR,
     STAGE_COLMAP,
     STAGE_COLLISION,
     STAGE_COMPLETED,
@@ -23,32 +21,34 @@ from pipeline import (
     train_gsplat,
     upload_results,
 )
-from pipeline.utils import download_file
+from pipeline.utils import download_file, extract_images_zips
 
 logger = logging.getLogger(__name__)
 
 CallbackFn = Callable[..., None]
 
 
-def _resolve_work_dir(job_id: str, images_path: str, on_log: Optional[CallbackFn] = None) -> tuple[Path, Path]:
-    """Resolve job workspace and uploaded ZIP path (downloading if URL)."""
+def _download_source_archives(
+    job_id: str,
+    source_files: list[dict[str, str]],
+    on_log: Optional[CallbackFn] = None,
+) -> tuple[Path, list[Path]]:
+    """Download source ZIPs from signed object URLs into the temporary job workspace."""
     work_dir = WORK_DIR / "jobs" / job_id
-    work_dir.mkdir(parents=True, exist_ok=True)
-
-    if images_path.startswith("http://") or images_path.startswith("https://"):
-        zip_path = work_dir / "images.zip"
-        download_file(images_path, zip_path, on_log=on_log)
-    else:
-        zip_path = Path(images_path)
-
-    return work_dir, zip_path
+    source_dir = work_dir / "source-zips"
+    source_dir.mkdir(parents=True, exist_ok=True)
+    archives = []
+    for index, source in enumerate(source_files, start=1):
+        original_name = source["original_name"].replace("\\", "/").rsplit("/", 1)[-1]
+        archive_path = source_dir / f"{index:03d}-{original_name}"
+        download_file(source["download_url"], archive_path, on_log=on_log)
+        archives.append(archive_path)
+    return work_dir, archives
 
 
 
 def run_placeholder_pipeline(
     job_id: str,
-    images_path: str,
-    callback_url: str,
     on_status: CallbackFn,
 ) -> None:
     """
@@ -73,22 +73,17 @@ def run_placeholder_pipeline(
         on_status(status, log_msg, progress)
         time.sleep(0.8)
 
-    splat_path = f"/uploads/jobs/{job_id}/output/scene.splat"
-    collision_path = f"/uploads/jobs/{job_id}/output/collision.glb"
-
     on_status(
         STAGE_COMPLETED,
-        "[complete] Placeholder pipeline finished. Set USE_MOCK=false for real training.",
+        "[complete] Placeholder pipeline finished without generated assets. Set USE_MOCK=false for real training.",
         100,
-        splat_path=splat_path,
-        collision_path=collision_path,
     )
 
 
 def run_full_pipeline(
     job_id: str,
-    images_path: str,
-    callback_url: str,
+    source_files: list[dict[str, str]],
+    output_uploads: dict[str, dict[str, str]],
     on_status: CallbackFn,
 ) -> None:
     """
@@ -101,11 +96,9 @@ def run_full_pipeline(
       4. convert_to_splat()
       5. upload_results()
     """
-    work_dir, zip_path = _resolve_work_dir(job_id, images_path)
+    work_dir, source_archives = _download_source_archives(job_id, source_files)
     output_dir = work_dir / "output"
     output_dir.mkdir(parents=True, exist_ok=True)
-
-    backend_uploads = zip_path.parent if zip_path.parent.name == "uploads" else BACKEND_UPLOADS_DIR
 
     def on_log(message: str) -> None:
         on_status(STAGE_COLMAP, message, _last_progress["value"])
@@ -122,10 +115,10 @@ def run_full_pipeline(
 
     on_status(STAGE_QUEUED, "Job accepted — starting COLMAP reconstruction", 5)
 
+    images_dir = extract_images_zips(source_archives, work_dir, on_log=on_log)
     colmap_dir = run_colmap(
-        work_dir / "images",
+        images_dir,
         work_dir / "colmap",
-        zip_path=zip_path,
         on_log=on_log,
         on_progress=on_colmap_progress,
     )
@@ -152,13 +145,11 @@ def run_full_pipeline(
         on_log=lambda msg: on_status(STAGE_EXPORT, msg, 88),
     )
 
-    on_status(STAGE_EXPORT, "Copying results to backend uploads", 95)
+    on_status(STAGE_EXPORT, "Uploading generated assets directly to object storage", 95)
     result = upload_results(
         splat_path,
         collision_path,
-        callback_url,
-        job_id,
-        backend_uploads_dir=backend_uploads,
+        output_uploads,
         on_log=lambda msg: on_status(STAGE_EXPORT, msg, 96),
     )
 
@@ -166,20 +157,20 @@ def run_full_pipeline(
         STAGE_COMPLETED,
         "Pipeline complete — scene ready for viewing",
         100,
-        splat_path=result["splat_path"],
-        collision_path=result["collision_path"],
+        splat_key=result["splat_key"],
+        collision_key=result["collision_key"],
     )
 
 
 def run_pipeline(
     job_id: str,
-    images_path: str,
-    callback_url: str,
+    source_files: list[dict[str, str]],
+    output_uploads: dict[str, dict[str, str]],
     on_status: CallbackFn,
     use_mock: bool = False,
 ) -> None:
     """Dispatch to placeholder or real pipeline."""
     if use_mock:
-        run_placeholder_pipeline(job_id, images_path, callback_url, on_status)
+        run_placeholder_pipeline(job_id, on_status)
     else:
-        run_full_pipeline(job_id, images_path, callback_url, on_status)
+        run_full_pipeline(job_id, source_files, output_uploads, on_status)

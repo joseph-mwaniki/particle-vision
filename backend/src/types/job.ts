@@ -18,11 +18,16 @@ export interface Job {
   splatPath: string | null;
   collisionPath: string | null;
   logs: string | null;
+  uploadSessionId?: string | null;
 }
 
 export interface WorkerRunRequest {
   job_id: string;
-  images_path: string;
+  source_files: Array<{ download_url: string; original_name: string }>;
+  output_uploads: {
+    splat: { key: string; url: string };
+    collision: { key: string; url: string };
+  };
   callback_url: string;
 }
 
@@ -37,7 +42,7 @@ export interface WorkerCallbackPayload {
   status: JobStatus;
   progress: number;
   log?: string;
-  splat_path?: string;
-  collision_path?: string;
+  splat_key?: string;
+  collision_key?: string;
   error?: string;
 }

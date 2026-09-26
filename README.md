@@ -71,7 +71,7 @@ npm run dev
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/health` | Health check |
-| `POST` | `/upload` | Upload image ZIP, create job |
+| `POST` | `/api/upload-session` | Create a direct-to-R2 multipart upload session |
 | `POST` | `/train` | Start training for a job |
 | `GET` | `/job/:id` | Get job status |
 | `GET` | `/job` | List all jobs |
@@ -81,25 +81,28 @@ Full contract: [docs/api-contract.md](docs/api-contract.md)
 ## Integration Flow
 
 ```
-Frontend ──POST /upload──► Backend ──POST /run──► GPU Worker
-Frontend ◄──GET /job/:id── Backend ◄──callback── GPU Worker
-Frontend ──loads──► scene.splat + collision.glb (future)
+Browser ──multipart PUT──► R2 ──object keys──► Backend ──job + signed URLs──► GPU Worker
+Browser ◄──signed/public R2 URL── R2 ◄──direct PUT── GPU Worker
+Frontend ◄──status + keys── Backend ◄──metadata callback── GPU Worker
 ```
 
 ## What's Implemented
 
 - Frontend ↔ Backend REST communication
 - Backend ↔ GPU Worker HTTP contract with callbacks
+- Browser-to-R2 multipart source uploads and worker-to-R2 output uploads
+- Postgres metadata and stable object-key references; temporary worker-only processing files
+- Direct signed/public R2 asset delivery to the viewer
 - Placeholder reconstruction pipeline (all stages raise `NotImplementedError`)
 - gsplat.js viewer with local sample `.splat` loading
 - Collision mesh architecture (interfaces only)
-- JSON file job storage (no production database)
+- Local JSON metadata fallback for development only; production requires Postgres
 
 ## What's NOT Implemented
 
 - GPU training, COLMAP execution
 - Payment, authentication, user management
-- Production database, background queues
+- Background queues
 - Cloud deployment automation
 
 ## Documentation

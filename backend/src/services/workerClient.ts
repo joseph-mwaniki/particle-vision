@@ -121,16 +121,10 @@ async function simulateMockPipeline(request: WorkerRunRequest): Promise<void> {
     log: "[export] Placeholder: converting to .splat format (not implemented)",
   });
 
-  // Use sample splat from HuggingFace as placeholder output
-  const splatPath = `/uploads/jobs/${jobId}/output/scene.splat`;
-  const collisionPath = `/uploads/jobs/${jobId}/output/collision.glb`;
-
   await sendCallback({
     job_id: jobId,
     status: "COMPLETED",
     progress: 100,
-    log: "[complete] Mock pipeline finished. Sample assets referenced (no real training).",
-    splat_path: splatPath,
-    collision_path: collisionPath,
+    log: "[complete] Mock pipeline finished without generated assets.",
   });
 }

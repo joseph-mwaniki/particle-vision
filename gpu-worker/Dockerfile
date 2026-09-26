@@ -61,8 +61,8 @@ RUN python3.10 -m pip install -e /workspace/gsplat/libs/stage
 # Pre-compile gsplat CUDA extension during docker build to eliminate 6+ minute runtime JIT delay
 RUN python3.10 -c "from gsplat.cuda._backend import _C; print('gsplat CUDA extension pre-compiled successfully!')"
 
-# Create workspace directories
-RUN mkdir -p /workspace/data/uploads /workspace/data/output
+# Create temporary workspace root
+RUN mkdir -p /workspace/data
 
 # Environment configuration
 ENV HOST=0.0.0.0

@@ -96,8 +96,8 @@ Open http://localhost:5173
 curl http://localhost:3001/health
 
 # Upload
-curl -X POST http://localhost:3001/upload \
-  -F "images=@test-photos.zip"
+# Start the frontend and use its ZIP uploader. Parts are sent directly from the
+# browser to R2; the API receives only upload-session metadata and ETags.
 
 # Train
 curl -X POST http://localhost:3001/train \
@@ -115,7 +115,13 @@ curl -X POST http://localhost:8080/run \
   -H "Content-Type: application/json" \
   -d '{
     "job_id": "job_test123",
-    "images_path": "/tmp/test.zip",
+    "source_files": [
+      { "download_url": "<presigned R2 GET URL>", "original_name": "test.zip" }
+    ],
+    "output_uploads": {
+      "splat": { "key": "splats/job_test123/scene.splat", "url": "<presigned R2 PUT URL>" },
+      "collision": { "key": "splats/job_test123/collision.glb", "url": "<presigned R2 PUT URL>" }
+    },
     "callback_url": "http://localhost:3001/internal/worker/callback"
   }'
 ```
@@ -135,7 +141,7 @@ The frontend dev server proxies `/api/*` to the backend:
 
 ```
 http://localhost:5173/api/health → http://localhost:3001/health
-http://localhost:5173/api/upload → http://localhost:3001/upload
+http://localhost:5173/api/upload-session → http://localhost:3001/upload-session
 ```
 
 Configured in `frontend/vite.config.js`.

@@ -3,7 +3,7 @@ import { getJob } from "../db";
 import { startTrainingJob } from "../services/jobManager";
 import { validateTrainRequest } from "../validation/schemas";
 
-export function createTrainRouter(uploadsDir: string): Router {
+export function createTrainRouter(): Router {
   const router = Router();
 
   router.post("/", async (req: Request, res: Response) => {
@@ -24,7 +24,7 @@ export function createTrainRouter(uploadsDir: string): Router {
         });
       }
 
-      startTrainingJob(validation.jobId, uploadsDir).catch((err) => {
+      startTrainingJob(validation.jobId).catch((err) => {
         console.error(`Training dispatch failed for ${validation.jobId}:`, err);
       });
 

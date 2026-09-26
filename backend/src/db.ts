@@ -43,7 +43,7 @@ try {
       globalThis.prismaClientInstance = prisma;
     }
     isPrismaAvailable = true;
-    console.log("[db] Prisma client initialized with DATABASE_URL:", process.env.DATABASE_URL.substring(0, 35) + "...");
+    console.log("[db] Prisma client initialized");
   }
 } catch (err) {
   console.warn("[db] Failed to initialize Prisma client:", err);
@@ -53,7 +53,8 @@ try {
 
 function handlePrismaError(err: any, context: string) {
   if (isPrismaAvailable) {
-    console.warn(`[db] Prisma ${context} fallback to local store (${err?.name || "error"}).`);
+    const action = process.env.NODE_ENV === "production" ? "failed" : "fallback to local store";
+    console.warn(`[db] Prisma ${context} ${action} (${err?.name || "error"}).`);
     if (
       err?.name === "PrismaClientInitializationError" ||
       err?.code === "P1001" ||
@@ -70,7 +71,14 @@ export { prisma };
 const JSON_DB_PATH = path.join(__dirname, "../jobs.json");
 const JSON_SPLATS_PATH = path.join(__dirname, "../splats.json");
 
+function ensureLocalJsonFallback() {
+  if (process.env.NODE_ENV === "production") {
+    throw new Error("DATABASE_URL is required in production; JSON metadata storage is for local development only");
+  }
+}
+
 function readJsonFile<T>(filePath: string): T[] {
+  ensureLocalJsonFallback();
   if (!fs.existsSync(filePath)) {
     fs.writeFileSync(filePath, JSON.stringify([]));
     return [];
@@ -90,6 +98,7 @@ function readJsonFile<T>(filePath: string): T[] {
 }
 
 function writeJsonFile<T>(filePath: string, items: T[]) {
+  ensureLocalJsonFallback();
   try {
     fs.writeFileSync(filePath, JSON.stringify(items, null, 2));
   } catch (err) {
@@ -98,44 +107,6 @@ function writeJsonFile<T>(filePath: string, items: T[]) {
 }
 
 // ---------------- JOB REPOSITORY ----------------
-
-export async function createJob(imagesPath: string): Promise<Job> {
-  const id = "job_" + Math.random().toString(36).substring(2, 11);
-  const now = new Date();
-  const newJob: Job = {
-    id,
-    status: "PENDING",
-    progress: 0,
-    createdAt: now,
-    updatedAt: now,
-    imagesPath,
-    splatPath: null,
-    collisionPath: null,
-    logs: `[${now.toISOString()}] Job created. Upload complete. Ready to train.`,
-  };
-
-  if (prisma && isPrismaAvailable) {
-    try {
-      const created = await prisma.job.create({
-        data: {
-          id: newJob.id,
-          status: newJob.status,
-          progress: newJob.progress,
-          imagesPath: newJob.imagesPath,
-          logs: newJob.logs,
-        },
-      });
-      return created as unknown as Job;
-    } catch (err) {
-      handlePrismaError(err, "createJob");
-    }
-  }
-
-  const jobs = readJsonFile<Job>(JSON_DB_PATH);
-  jobs.push(newJob);
-  writeJsonFile(JSON_DB_PATH, jobs);
-  return newJob;
-}
 
 export async function updateJob(
   id: string,

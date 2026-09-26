@@ -9,6 +9,8 @@ export interface Job {
   imagesPath: string;
   splatPath: string | null;
   collisionPath: string | null;
+  splatUrl?: string | null;
+  collisionUrl?: string | null;
   logs: string | null;
 }
 
@@ -27,6 +29,8 @@ export interface Splat {
   status: "draft" | "published";
   splatPath: string;
   collisionPath: string | null;
+  splatUrl?: string | null;
+  collisionUrl?: string | null;
   thumbnailUrl: string | null;
   cameraConfig: CameraConfig | null;
   shareToken: string;
@@ -67,35 +71,6 @@ export async function getJob(id: string): Promise<Job> {
   const res = await fetch(`${API_BASE}/job/${id}`);
   if (!res.ok) throw new Error(`Failed to get job: ${res.status}`);
   return res.json();
-}
-
-export async function uploadImages(file: File, onProgress?: (pct: number) => void): Promise<Job> {
-  return new Promise((resolve, reject) => {
-    const formData = new FormData();
-    formData.append("images", file);
-
-    const xhr = new XMLHttpRequest();
-    xhr.open("POST", `${API_BASE}/upload`);
-
-    if (onProgress) {
-      xhr.upload.onprogress = (e) => {
-        if (e.lengthComputable) {
-          onProgress((e.loaded / e.total) * 100);
-        }
-      };
-    }
-
-    xhr.onload = () => {
-      if (xhr.status === 201) {
-        resolve(JSON.parse(xhr.responseText));
-      } else {
-        reject(new Error(xhr.responseText || `Upload failed: ${xhr.status}`));
-      }
-    };
-
-    xhr.onerror = () => reject(new Error("Network error during upload"));
-    xhr.send(formData);
-  });
 }
 
 interface UploadFileInit {
@@ -184,7 +159,7 @@ export async function uploadZipFiles(
       if (!completeResponse.ok) throw new Error(await completeResponse.text());
     }
 
-    onStage?.("Combining files...");
+    onStage?.("Finalizing upload...");
     const completeResponse = await fetch(`${API_BASE}/upload-session/${session.id}/complete`, { method: "POST" });
     if (!completeResponse.ok) throw new Error(await completeResponse.text());
 
@@ -192,7 +167,7 @@ export async function uploadZipFiles(
       const statusResponse = await fetch(`${API_BASE}/upload-session/${session.id}`);
       if (!statusResponse.ok) throw new Error(await statusResponse.text());
       const status = await statusResponse.json() as UploadSessionStatus;
-      onStage?.(status.status === "ASSEMBLED" ? "Files combined. Ready to start training." : "Combining files...");
+      onStage?.(status.status === "ASSEMBLED" ? "Upload complete. Ready to start training." : "Finalizing upload...");
       if (status.status === "FAILED") throw new Error("Upload assembly failed. Check the backend logs for details.");
       if (status.status === "ASSEMBLED" && status.job) return status.job;
       await new Promise((resolve) => setTimeout(resolve, 2000));
@@ -324,6 +299,7 @@ export async function deleteSplat(id: string): Promise<void> {
 export function assetUrl(path: string): string {
   if (!path) return "";
   if (path.startsWith("http://") || path.startsWith("https://")) return path;
+  if (path.startsWith("/samples/")) return path;
   if (path.startsWith("/")) return `${API_BASE}${path}`;
   return `${API_BASE}/${path}`;
 }

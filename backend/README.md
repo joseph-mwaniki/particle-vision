@@ -7,12 +7,11 @@ Express/TypeScript REST API for job upload, training dispatch, and status tracki
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/health` | Service health check |
-| `POST` | `/upload` | Upload image ZIP (`multipart/form-data`, field `images`) |
 | `POST` | `/api/upload-session` | Create a multi-ZIP direct-to-S3/R2 upload session |
 | `POST` | `/api/upload-session/:id/file` | Initialize one ZIP multipart upload and return presigned part URLs |
 | `POST` | `/api/upload-session/:id/file/:fileId/complete` | Complete one ZIP multipart upload |
-| `POST` | `/api/upload-session/:id/complete` | Assemble uploaded ZIPs and start processing |
-| `GET` | `/api/upload-session/:id` | Read upload, assembly, and job status |
+| `POST` | `/api/upload-session/:id/complete` | Create a job from completed R2 objects |
+| `GET` | `/api/upload-session/:id` | Read upload and job status |
 | `POST` | `/api/upload-session/:id/abort` | Abort the session and clean up source objects |
 | `POST` | `/train` | Start training (`{ "jobId": "job_abc123" }`) |
 | `GET` | `/job/:id` | Get job by ID |
@@ -39,8 +38,11 @@ npm run dev
 | `S3_REGION` | `auto` | S3 region (`auto` for R2) |
 | `S3_ACCESS_KEY_ID` | — | Server-only S3/R2 access key |
 | `S3_SECRET_ACCESS_KEY` | — | Server-only S3/R2 secret |
-| `S3_BUCKET` | — | Bucket used for source and combined ZIPs |
+| `S3_BUCKET` | — | Bucket used for source archives and generated assets |
 | `S3_UPLOAD_PART_SIZE` | `67108864` | Multipart part size in bytes |
+| `S3_PRESIGN_EXPIRES_SECONDS` | `900` | Lifetime of browser multipart-part URLs |
+| `S3_DOWNLOAD_EXPIRES_SECONDS` | `43200` | Lifetime of signed worker and private viewer URLs |
+| `S3_PUBLIC_URL_PREFIX` | — | Optional public R2 delivery prefix for published public splats |
 
 ## Job Lifecycle
 
@@ -51,7 +53,9 @@ PENDING → QUEUED → PROCESSING_COLMAP → PROCESSING_GSPLAT
 
 ## Storage
 
-Jobs are persisted in PostgreSQL when configured, with the existing JSON fallback for local development. Legacy uploads are stored in `uploads/`. The multi-ZIP flow uploads source archives directly from the browser to S3/R2, assembles image entries into `datasets/{sessionId}/combined.zip`, and sends the GPU worker a presigned GET URL. Configure bucket CORS to allow browser `PUT` requests and expose the `ETag` response header.
+Upload sessions and object keys are stored in PostgreSQL. The browser uploads ZIP parts directly to R2 with presigned multipart URLs; completion records metadata only and creates a job linked to the session. The worker downloads each source ZIP directly from R2 to temporary `WORK_DIR`, processes it locally, and uploads generated assets directly to R2 with presigned PUT URLs. Vercel handles metadata and signed-URL generation only. Configure bucket CORS for the frontend origin, allow browser `PUT`, `GET`, and `HEAD`, and expose `ETag`, `Content-Length`, and `Accept-Ranges` response headers.
+
+`Job.splatPath` and `Job.collisionPath` store R2 object keys, not filesystem paths. API responses include `splatUrl` and `collisionUrl`: published public splats use `S3_PUBLIC_URL_PREFIX` when configured; other R2 assets use short-lived signed URLs.
 
 ## Build
 

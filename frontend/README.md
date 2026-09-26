@@ -4,10 +4,10 @@ Vite + TypeScript dashboard with gsplat.js 3D viewer.
 
 ## Features
 
-- Upload image ZIP files via `POST /upload`
+- Upload ZIP files directly to R2 with presigned multipart URLs
 - Start training via `POST /train`
 - Poll job status via `GET /job/:id`
-- Load completed `scene.splat` from backend
+- Load completed assets from signed or public R2 URLs
 - Load local sample `.splat` via "Load Sample" button
 - Architecture ready for invisible `collision.glb` loading
 
@@ -34,11 +34,11 @@ Open http://localhost:5173
 
 ## API Integration
 
-All API calls are in `src/api.ts`:
+API and direct-upload calls are in `src/api.ts`:
 
 ```typescript
 checkHealth()     // GET  /health
-uploadImages()    // POST /upload
+uploadZipFiles()  // Browser → R2 multipart upload, API receives metadata only
 startTraining()   // POST /train
 getJob(id)        // GET  /job/:id
 listJobs()        // GET  /job

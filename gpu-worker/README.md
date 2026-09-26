@@ -9,8 +9,8 @@ RunPod-ready Python worker for 3D Gaussian Splatting reconstruction.
 ## Pipeline Stages
 
 ```
-Images → run_colmap() → train_gsplat() → generate_collision_mesh()
-       → convert_to_splat() → upload_results()
+R2 source ZIPs → temporary WORK_DIR → run_colmap() → train_gsplat()
+     → generate_collision_mesh() → convert_to_splat() → R2 outputs
 ```
 
 ### Collision Mesh (future)
@@ -34,7 +34,6 @@ python handler.py
 ```bash
 docker build -t remote-view-worker .
 docker run -p 8080:8080 \
-  -e BACKEND_CALLBACK_URL=http://host.docker.internal:3001/internal/worker/callback \
   remote-view-worker
 ```
 
@@ -52,10 +51,18 @@ docker run -p 8080:8080 \
 ```python
 {
   "job_id": "job_abc123",
-  "images_path": "/workspace/data/uploads/images.zip",
+  "source_files": [
+    { "download_url": "<presigned R2 GET URL>", "original_name": "images.zip" }
+  ],
+  "output_uploads": {
+    "splat": { "key": "splats/job_abc123/scene.splat", "url": "<presigned R2 PUT URL>" },
+    "collision": { "key": "splats/job_abc123/collision.glb", "url": "<presigned R2 PUT URL>" }
+  },
   "callback_url": "https://api.example.com/internal/worker/callback"
 }
 ```
+
+The worker requires no R2 credentials: the backend sends short-lived signed URLs. ZIPs, extracted images, COLMAP data, and generated outputs live under `WORK_DIR/jobs/{job_id}` only while processing; the worker deletes that directory after success or failure.
 
 ## Configuration
 
