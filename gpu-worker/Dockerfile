@@ -217,34 +217,3 @@ HEALTHCHECK \
 WORKDIR /workspace/gpu-worker
 
 CMD ["python3.10", "handler.py"]
-```
-
-The important change is:
-
-```dockerfile
-libopencv-dev \
-```
-
-plus:
-
-```dockerfile
-RUN test -d /usr/include/opencv4 \
-    && test -f /usr/include/opencv4/opencv2/core.hpp \
-    && echo "OpenCV development headers found: /usr/include/opencv4"
-```
-
-Your previous failure should therefore be addressed **before CMake even starts**.
-
-The next GitHub Actions build should get past:
-
-```text
-[8/25] RUN cmake ..
-```
-
-and proceed into:
-
-```text
-RUN ninja -j"$(nproc)"
-```
-
-If that happens, the OpenImageIO/OpenCV problem is definitively gone.
