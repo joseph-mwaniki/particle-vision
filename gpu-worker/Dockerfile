@@ -1,70 +1,168 @@
 # GPU Worker + gsplat Engine - Vast.ai / RunPod GPU container
-# Packages both the orchestration worker (gpu-worker) and rendering engine (gsplat).
 #
 # Build from repository root:
-#   docker build -f gpu-worker/Dockerfile -t YOUR_DOCKERHUB_USERNAME/remote-view-worker:latest .
+# docker build -f gpu-worker/Dockerfile \
+#   -t YOUR_DOCKERHUB_USERNAME/remote-view-worker:latest .
 
 FROM nvidia/cuda:13.0.0-devel-ubuntu22.04
 
 WORKDIR /workspace
 
-# Set CUDA environment paths
+# ------------------------------------------------------------
+# CUDA environment
+# ------------------------------------------------------------
+
 ENV CUDA_HOME=/usr/local/cuda
 ENV PATH=/usr/local/cuda/bin:${PATH}
 ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64:${LD_LIBRARY_PATH}
 
-# Verify nvcc compiler is available
 RUN nvcc --version
 
-# Install system dependencies, Python 3.10, development headers, COLMAP, and media libraries
+# ------------------------------------------------------------
+# System dependencies
+# ------------------------------------------------------------
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
+    cmake \
+    ninja-build \
+    git \
+    curl \
+    pkg-config \
     python3.10 \
     python3.10-dev \
     python3-pip \
-    colmap \
-    curl \
-    git \
+    gcc-10 \
+    g++-10 \
+    libboost-program-options-dev \
+    libboost-filesystem-dev \
+    libboost-graph-dev \
+    libboost-system-dev \
+    libeigen3-dev \
+    libopenimageio-dev \
+    openimageio-tools \
+    libmetis-dev \
+    libgoogle-glog-dev \
+    libgflags-dev \
+    libgtest-dev \
+    libgmock-dev \
+    libsqlite3-dev \
+    libglew-dev \
+    libqt5opengl5-dev \
+    qtbase5-dev \
+    libqt5svg5-dev \
+    libcgal-dev \
+    libceres-dev \
+    libsuitesparse-dev \
+    libcurl4-openssl-dev \
+    libssl-dev \
+    libatlas-base-dev \
     libgl1-mesa-glx \
     libglib2.0-0 \
     ffmpeg \
-    ninja-build \
     libglm-dev \
     xvfb \
     xauth \
     && rm -rf /var/lib/apt/lists/*
 
+# ------------------------------------------------------------
+# CUDA compiler compatibility for Ubuntu 22.04
+# ------------------------------------------------------------
+
+ENV CC=/usr/bin/gcc-10
+ENV CXX=/usr/bin/g++-10
+ENV CUDAHOSTCXX=/usr/bin/g++-10
+
+# ------------------------------------------------------------
+# Build COLMAP with CUDA support
+# ------------------------------------------------------------
+
+RUN git clone --depth 1 https://github.com/colmap/colmap.git /tmp/colmap
+
+WORKDIR /tmp/colmap/build
+
+RUN cmake .. \
+    -GNinja \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCUDA_ENABLED=ON \
+    -DCMAKE_CUDA_ARCHITECTURES="80;86;89;90" \
+    -DCMAKE_INSTALL_PREFIX=/usr/local
+
+RUN ninja -j"$(nproc)"
+
+RUN ninja install
+
+# Make sure the CUDA-enabled COLMAP binary is the one we use.
+RUN which colmap && colmap -h
+
+# Verify that the COLMAP binary can see CUDA-related libraries.
+RUN ldd "$(which colmap)" | grep -E "cuda|cudart|curand|cublas" || true
+
+WORKDIR /workspace
+
+RUN rm -rf /tmp/colmap
+
+# ------------------------------------------------------------
+# Python
+# ------------------------------------------------------------
+
 RUN python3.10 -m pip install --upgrade pip
 
-# Install PyTorch with CUDA 13.0 support
-RUN python3.10 -m pip install torch==2.10.0 \
+# PyTorch CUDA 13.0
+RUN python3.10 -m pip install \
+    torch==2.10.0 \
     --index-url https://download.pytorch.org/whl/cu130
 
-# Copy worker requirements and install Python dependencies
-COPY gpu-worker/requirements.txt ./requirements.txt
-RUN python3.10 -m pip install --no-cache-dir -r requirements.txt
+# ------------------------------------------------------------
+# GPU worker Python dependencies
+# ------------------------------------------------------------
 
-# Copy worker and modified gsplat source code
+COPY gpu-worker/requirements.txt ./requirements.txt
+
+RUN python3.10 -m pip install \
+    --no-cache-dir \
+    -r requirements.txt
+
+# ------------------------------------------------------------
+# Copy application and gsplat
+# ------------------------------------------------------------
+
 COPY gpu-worker/ ./gpu-worker/
 COPY gsplat/ ./gsplat/
 
-# Set CUDA architectures for PyTorch C++ extensions to prevent IndexError
+# ------------------------------------------------------------
+# CUDA architectures for gsplat
+# ------------------------------------------------------------
+
 ENV TORCH_CUDA_ARCH_LIST="8.0;8.6;8.9;9.0"
 
-# Install local modified gsplat engine and trainer libraries
+# ------------------------------------------------------------
+# Install local gsplat engine
+# ------------------------------------------------------------
+
 RUN python3.10 -m pip install -e /workspace/gsplat
 
-# Install scene and stage libraries (skip examples to avoid dependency conflicts)
 RUN python3.10 -m pip install -e /workspace/gsplat/libs/scene
+
 RUN python3.10 -m pip install -e /workspace/gsplat/libs/stage
 
-# Pre-compile gsplat CUDA extension during docker build to eliminate 6+ minute runtime JIT delay
-RUN python3.10 -c "from gsplat.cuda._backend import _C; print('gsplat CUDA extension pre-compiled successfully!')"
+# ------------------------------------------------------------
+# Precompile gsplat CUDA extension
+# ------------------------------------------------------------
 
-# Create temporary workspace root
+RUN python3.10 -c \
+    "from gsplat.cuda._backend import _C; print('gsplat CUDA extension pre-compiled successfully!')"
+
+# ------------------------------------------------------------
+# Worker workspace
+# ------------------------------------------------------------
+
 RUN mkdir -p /workspace/data
 
-# Environment configuration
+# ------------------------------------------------------------
+# Runtime environment
+# ------------------------------------------------------------
+
 ENV HOST=0.0.0.0
 ENV PORT=8080
 ENV WORK_DIR=/workspace/data
@@ -73,10 +171,25 @@ ENV PYTHONPATH=/workspace/gsplat
 ENV USE_MOCK=false
 ENV QT_QPA_PLATFORM=offscreen
 
+# Explicitly request CUDA for COLMAP.
+ENV COLMAP_USE_GPU=1
+
 EXPOSE 8080
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \
+# ------------------------------------------------------------
+# Container health check
+# ------------------------------------------------------------
+
+HEALTHCHECK \
+    --interval=30s \
+    --timeout=5s \
+    --start-period=10s \
     CMD curl -f http://localhost:8080/health || exit 1
 
+# ------------------------------------------------------------
+# Start worker
+# ------------------------------------------------------------
+
 WORKDIR /workspace/gpu-worker
+
 CMD ["python3.10", "handler.py"]
