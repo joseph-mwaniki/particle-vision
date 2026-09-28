@@ -41,6 +41,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libeigen3-dev \
     libopenimageio-dev \
     openimageio-tools \
+    libopenexr-dev \
     libmetis-dev \
     libgoogle-glog-dev \
     libgflags-dev \
