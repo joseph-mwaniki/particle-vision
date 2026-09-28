@@ -93,9 +93,13 @@ RUN python3.10 -m pip install --no-cache-dir --upgrade pip cmake
 # CUDA compiler compatibility for Ubuntu 22.04
 # ------------------------------------------------------------
 
-ENV CC=/usr/bin/gcc-10
-ENV CXX=/usr/bin/g++-10
-ENV CUDAHOSTCXX=/usr/bin/g++-10
+ENV CC=/usr/bin/gcc-12
+ENV CXX=/usr/bin/g++-12
+ENV CUDAHOSTCXX=/usr/bin/g++-12 
+
+RUN gcc --version && \
+    g++ --version && \
+    nvcc --version
 
 # ------------------------------------------------------------
 # Build COLMAP with CUDA support
