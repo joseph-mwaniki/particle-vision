@@ -1,4 +1,4 @@
-```dockerfile
+
 # GPU Worker + gsplat Engine - Vast.ai / RunPod GPU container
 #
 # Build from repository root:
