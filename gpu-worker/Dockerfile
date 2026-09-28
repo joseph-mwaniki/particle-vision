@@ -1,3 +1,4 @@
+```dockerfile
 # GPU Worker + gsplat Engine - Vast.ai / RunPod GPU container
 #
 # Build from repository root:
@@ -42,6 +43,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libopenimageio-dev \
     openimageio-tools \
     libopenexr-dev \
+    libopencv-dev \
     libmetis-dev \
     libgoogle-glog-dev \
     libgflags-dev \
@@ -67,6 +69,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # ------------------------------------------------------------
+# Verify OpenCV development files
+# ------------------------------------------------------------
+# OpenImageIO's CMake target expects this directory.
+# Fail early if the system OpenCV development package did not
+# install correctly.
+
+RUN test -d /usr/include/opencv4 \
+    && test -f /usr/include/opencv4/opencv2/core.hpp \
+    && echo "OpenCV development headers found: /usr/include/opencv4"
+
+# ------------------------------------------------------------
 # Modern CMake & Pip
 # ------------------------------------------------------------
 
@@ -84,7 +97,11 @@ ENV CUDAHOSTCXX=/usr/bin/g++-10
 # Build COLMAP with CUDA support
 # ------------------------------------------------------------
 
-RUN git clone --branch 4.2.0 --depth 1 https://github.com/colmap/colmap.git /tmp/colmap
+RUN git clone \
+    --branch 4.2.0 \
+    --depth 1 \
+    https://github.com/colmap/colmap.git \
+    /tmp/colmap
 
 WORKDIR /tmp/colmap/build
 
@@ -116,7 +133,8 @@ RUN rm -rf /tmp/colmap
 
 # PyTorch & Torchvision CUDA 13.0
 RUN python3.10 -m pip install \
-    torch==2.10.0 torchvision \
+    torch==2.10.0 \
+    torchvision \
     --index-url https://download.pytorch.org/whl/cu130
 
 # ------------------------------------------------------------
@@ -199,3 +217,34 @@ HEALTHCHECK \
 WORKDIR /workspace/gpu-worker
 
 CMD ["python3.10", "handler.py"]
+```
+
+The important change is:
+
+```dockerfile
+libopencv-dev \
+```
+
+plus:
+
+```dockerfile
+RUN test -d /usr/include/opencv4 \
+    && test -f /usr/include/opencv4/opencv2/core.hpp \
+    && echo "OpenCV development headers found: /usr/include/opencv4"
+```
+
+Your previous failure should therefore be addressed **before CMake even starts**.
+
+The next GitHub Actions build should get past:
+
+```text
+[8/25] RUN cmake ..
+```
+
+and proceed into:
+
+```text
+RUN ninja -j"$(nproc)"
+```
+
+If that happens, the OpenImageIO/OpenCV problem is definitively gone.
