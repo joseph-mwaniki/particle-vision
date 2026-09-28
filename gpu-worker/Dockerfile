@@ -66,6 +66,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # ------------------------------------------------------------
+# Modern CMake & Pip
+# ------------------------------------------------------------
+
+RUN python3.10 -m pip install --no-cache-dir --upgrade pip cmake
+
+# ------------------------------------------------------------
 # CUDA compiler compatibility for Ubuntu 22.04
 # ------------------------------------------------------------
 
@@ -77,7 +83,7 @@ ENV CUDAHOSTCXX=/usr/bin/g++-10
 # Build COLMAP with CUDA support
 # ------------------------------------------------------------
 
-RUN git clone --depth 1 https://github.com/colmap/colmap.git /tmp/colmap
+RUN git clone --branch 4.2.0 --depth 1 https://github.com/colmap/colmap.git /tmp/colmap
 
 WORKDIR /tmp/colmap/build
 
@@ -86,6 +92,7 @@ RUN cmake .. \
     -DCMAKE_BUILD_TYPE=Release \
     -DCUDA_ENABLED=ON \
     -DCMAKE_CUDA_ARCHITECTURES="80;86;89;90" \
+    -DCOLMAP_HASH_MAP_BACKEND=STD \
     -DCMAKE_INSTALL_PREFIX=/usr/local
 
 RUN ninja -j"$(nproc)"
@@ -106,11 +113,9 @@ RUN rm -rf /tmp/colmap
 # Python
 # ------------------------------------------------------------
 
-RUN python3.10 -m pip install --upgrade pip
-
-# PyTorch CUDA 13.0
+# PyTorch & Torchvision CUDA 13.0
 RUN python3.10 -m pip install \
-    torch==2.10.0 \
+    torch==2.10.0 torchvision \
     --index-url https://download.pytorch.org/whl/cu130
 
 # ------------------------------------------------------------
