@@ -37,8 +37,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3.10 \
     python3.10-dev \
     python3-pip \
-    gcc-10 \
-    g++-10 \
+    gcc-12 \
+    g++-12 \
     libboost-program-options-dev \
     libboost-filesystem-dev \
     libboost-graph-dev \
@@ -95,10 +95,12 @@ RUN python3.10 -m pip install --no-cache-dir --upgrade pip cmake
 
 ENV CC=/usr/bin/gcc-12
 ENV CXX=/usr/bin/g++-12
-ENV CUDAHOSTCXX=/usr/bin/g++-12 
+ENV CUDAHOSTCXX=/usr/bin/g++-12
 
-RUN gcc --version && \
-    g++ --version && \
+RUN test -x /usr/bin/gcc-12 && \
+    test -x /usr/bin/g++-12 && \
+    /usr/bin/gcc-12 --version && \
+    /usr/bin/g++-12 --version && \
     nvcc --version
 
 # ------------------------------------------------------------
