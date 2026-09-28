@@ -23,6 +23,10 @@ RUN nvcc --version
 # System dependencies
 # ------------------------------------------------------------
 
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TZ=Africa/Nairobi
+
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     cmake \
