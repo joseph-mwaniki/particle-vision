@@ -221,7 +221,7 @@ def viewmat_to_camera_position(viewmats: Tensor) -> Tensor:
     """
     R = viewmats[..., :3, :3]
     t = viewmats[..., :3, 3]
-    return -(R.mT @ t.unsqueeze(-1)).squeeze(-1)
+    return -((R.mT * t.unsqueeze(-2)).sum(dim=-1))
 
 
 def compute_directions(
