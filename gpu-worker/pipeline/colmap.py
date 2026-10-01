@@ -45,8 +45,8 @@ def run_colmap(
     """
     Run COLMAP structure-from-motion on uploaded images.
 
-    Pipeline:
-      images/ → feature_extractor → exhaustive_matcher → mapper → sparse/0/
+        Pipeline:
+            images/ → feature_extractor → exhaustive_matcher → mapper → sparse/0/
 
     Returns path to COLMAP dataset root (contains images/ + sparse/0/).
     """
@@ -161,17 +161,19 @@ def run_colmap(
         else:
             raise
 
-    report("sparse_reconstruction", 28, "Running sparse mapper (SfM)")
+    report("sparse_reconstruction", 28, "Running GLOMAP global mapper (SfM)")
     run_command(
         [
             colmap_bin,
-            "mapper",
+            "global_mapper",
             "--database_path",
             str(database_path),
             "--image_path",
             str(dataset_images),
             "--output_path",
             str(sparse_dir),
+            "--GlobalMapper.multiple_models",
+            "0",
         ],
         on_log=on_log,
     )
