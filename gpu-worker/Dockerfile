@@ -5,7 +5,12 @@
 # docker build -f gpu-worker/Dockerfile \
 #   -t YOUR_DOCKERHUB_USERNAME/remote-view-worker:latest .
 
-FROM nvidia/cuda:13.0.0-devel-ubuntu22.04
+ARG CUDA_BASE_IMAGE=nvidia/cuda:13.0.0-devel-ubuntu22.04
+FROM ${CUDA_BASE_IMAGE}
+
+ARG TORCH_VERSION=2.10.0
+ARG TORCHVISION_SPEC=torchvision
+ARG TORCH_CUDA_VARIANT=cu130
 
 WORKDIR /workspace
 
@@ -141,11 +146,11 @@ RUN rm -rf /tmp/colmap
 # Python
 # ------------------------------------------------------------
 
-# PyTorch & Torchvision CUDA 13.0
+# PyTorch stack is selectable for CUDA runtime A/B builds.
 RUN python3.10 -m pip install \
-    torch==2.10.0 \
-    torchvision \
-    --index-url https://download.pytorch.org/whl/cu130
+    torch==${TORCH_VERSION} \
+    ${TORCHVISION_SPEC} \
+    --index-url https://download.pytorch.org/whl/${TORCH_CUDA_VARIANT}
 
 # ------------------------------------------------------------
 # GPU worker Python dependencies
