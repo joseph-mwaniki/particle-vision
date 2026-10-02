@@ -44,6 +44,12 @@ def train_gsplat(
     report("init", 38, f"COLMAP data: {colmap_dir}")
 
     env = os.environ.copy()
+
+    # Vast.ai injects the system CUDA library path. PyTorch ships
+    # its own compatible CUDA/cuBLAS libraries, so don't override
+    # PyTorch's library resolution for the gsplat subprocess.
+    env.pop("LD_LIBRARY_PATH", None)
+
     pythonpath_parts = [str(GSPLAT_REPO_PATH), str(examples_dir)]
     if env.get("PYTHONPATH"):
         pythonpath_parts.append(env["PYTHONPATH"])
