@@ -603,6 +603,7 @@ function renderJobsList() {
         const progressPct = job.progress.toFixed(0);
         const statusLabel = job.status.replace("PROCESSING_", "");
         const canTrain = job.status === "PENDING" || job.status === "FAILED";
+        const trainActionLabel = job.status === "FAILED" ? "Retry Training" : "Start Training";
         return `
         <div class="job-card ${isActive}" data-id="${job.id}">
           <div class="job-card-header">
@@ -618,7 +619,7 @@ function renderJobsList() {
             </div>
             <span class="progress-text">${progressPct}%</span>
           </div>
-          ${canTrain ? `<button class="btn btn-sm btn-accent btn-train-action" data-train-id="${job.id}">Start Training</button>` : ""}
+          ${canTrain ? `<button class="btn btn-sm btn-accent btn-train-action" data-train-id="${job.id}" title="Uses the ZIP files already uploaded for this job">${trainActionLabel}</button>` : ""}
         </div>
       `;
     })

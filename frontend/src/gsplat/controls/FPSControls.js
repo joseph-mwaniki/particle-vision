@@ -1,40 +1,53 @@
 import { Quaternion } from "../math/Quaternion";
-import { Matrix3 } from "../math/Matrix3";
 import { Vector3 } from "../math/Vector3";
 class FPSControls {
-    moveSpeed = 1.5;
-    lookSpeed = 0.7;
-    dampening = 0.5;
+    moveSpeed = 2;
+    lookSpeed = 0.0025;
+    acceleration = 12;
+    friction = 10;
     update;
     dispose;
     constructor(camera, canvas) {
         const keys = {};
+        const originalCursor = canvas.style.cursor;
         let pitch = camera.rotation.toEuler().x;
         let yaw = camera.rotation.toEuler().y;
-        let targetPosition = camera.position;
-        let pointerLock = false;
-        const onMouseDown = () => {
-            canvas.requestPointerLock();
+        let velocity = new Vector3();
+        let dragging = false;
+        let lastX = 0;
+        let lastY = 0;
+        let lastTime = performance.now();
+        const onMouseDown = (e) => {
+            if (e.button !== 0)
+                return;
+            dragging = true;
+            lastX = e.clientX;
+            lastY = e.clientY;
+            canvas.style.cursor = "grabbing";
+            window.addEventListener("mousemove", onMouseMove);
+            window.addEventListener("mouseup", onMouseUp);
+            e.preventDefault();
         };
-        const onPointerLockChange = () => {
-            pointerLock = document.pointerLockElement === canvas;
-            if (pointerLock) {
-                canvas.addEventListener("mousemove", onMouseMove);
-            }
-            else {
-                canvas.removeEventListener("mousemove", onMouseMove);
-            }
+        const onMouseUp = (e) => {
+            if (e.button !== 0)
+                return;
+            dragging = false;
+            canvas.style.cursor = "grab";
+            window.removeEventListener("mousemove", onMouseMove);
+            window.removeEventListener("mouseup", onMouseUp);
         };
         const onMouseMove = (e) => {
-            const mouseX = e.movementX;
-            const mouseY = e.movementY;
-            yaw += mouseX * this.lookSpeed * 0.001;
-            pitch -= mouseY * this.lookSpeed * 0.001;
-            pitch = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, pitch));
+            if (!dragging)
+                return;
+            yaw += (e.clientX - lastX) * this.lookSpeed;
+            pitch -= (e.clientY - lastY) * this.lookSpeed;
+            const pitchLimit = Math.PI / 2 - 0.01;
+            pitch = Math.max(-pitchLimit, Math.min(pitchLimit, pitch));
+            lastX = e.clientX;
+            lastY = e.clientY;
         };
         const onKeyDown = (e) => {
             keys[e.code] = true;
-            // Map arrow keys to WASD keys
             if (e.code === "ArrowUp")
                 keys["KeyW"] = true;
             if (e.code === "ArrowDown")
@@ -43,10 +56,11 @@ class FPSControls {
                 keys["KeyA"] = true;
             if (e.code === "ArrowRight")
                 keys["KeyD"] = true;
+            if (e.code.startsWith("Arrow"))
+                e.preventDefault();
         };
         const onKeyUp = (e) => {
             keys[e.code] = false;
-            // Map arrow keys to WASD keys
             if (e.code === "ArrowUp")
                 keys["KeyW"] = false;
             if (e.code === "ArrowDown")
@@ -55,57 +69,52 @@ class FPSControls {
                 keys["KeyA"] = false;
             if (e.code === "ArrowRight")
                 keys["KeyD"] = false;
-            if (e.code === "Escape")
-                document.exitPointerLock();
         };
+        const onBlur = () => {
+            for (const key in keys)
+                keys[key] = false;
+        };
+        const preventDefault = (e) => e.preventDefault();
         this.update = () => {
-            const R = Matrix3.RotationFromQuaternion(camera.rotation).buffer;
-            const forward = new Vector3(-R[2], -R[5], -R[8]);
-            const right = new Vector3(R[0], R[3], R[6]);
-            let move = new Vector3(0, 0, 0);
-            if (keys["KeyS"]) {
-                move = move.add(forward);
-            }
-            if (keys["KeyW"]) {
-                move = move.subtract(forward);
-            }
-            if (keys["KeyA"]) {
-                move = move.subtract(right);
-            }
-            if (keys["KeyD"]) {
-                move = move.add(right);
-            }
-            move = new Vector3(move.x, 0, move.z);
-            if (move.magnitude() > 0) {
-                move = move.normalize();
-            }
-            targetPosition = targetPosition.add(move.multiply(this.moveSpeed * 0.01));
-            camera.position = camera.position.add(targetPosition.subtract(camera.position).multiply(this.dampening));
+            const now = performance.now();
+            const dt = Math.min((now - lastTime) / 1000, 0.1);
+            lastTime = now;
+            const forward = new Vector3(Math.sin(yaw), 0, Math.cos(yaw));
+            const right = new Vector3(Math.cos(yaw), 0, -Math.sin(yaw));
+            let wish = new Vector3();
+            if (keys["KeyW"])
+                wish = wish.add(forward);
+            if (keys["KeyS"])
+                wish = wish.subtract(forward);
+            if (keys["KeyA"])
+                wish = wish.subtract(right);
+            if (keys["KeyD"])
+                wish = wish.add(right);
+            const moving = wish.magnitude() > 0;
+            if (moving)
+                wish = wish.normalize();
+            const targetVelocity = wish.multiply(this.moveSpeed);
+            const rate = moving ? this.acceleration : this.friction;
+            velocity = velocity.lerp(targetVelocity, Math.min(rate * dt, 1));
+            camera.position = camera.position.add(velocity.multiply(dt));
             camera.rotation = Quaternion.FromEuler(new Vector3(pitch, yaw, 0));
         };
-        const preventDefault = (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-        };
         this.dispose = () => {
-            canvas.removeEventListener("dragenter", preventDefault);
-            canvas.removeEventListener("dragover", preventDefault);
-            canvas.removeEventListener("dragleave", preventDefault);
-            canvas.removeEventListener("contextmenu", preventDefault);
             canvas.removeEventListener("mousedown", onMouseDown);
-            document.removeEventListener("pointerlockchange", onPointerLockChange);
+            canvas.removeEventListener("contextmenu", preventDefault);
+            window.removeEventListener("mousemove", onMouseMove);
+            window.removeEventListener("mouseup", onMouseUp);
             window.removeEventListener("keydown", onKeyDown);
             window.removeEventListener("keyup", onKeyUp);
+            window.removeEventListener("blur", onBlur);
+            canvas.style.cursor = originalCursor;
         };
+        canvas.style.cursor = "grab";
+        canvas.addEventListener("mousedown", onMouseDown);
+        canvas.addEventListener("contextmenu", preventDefault);
         window.addEventListener("keydown", onKeyDown);
         window.addEventListener("keyup", onKeyUp);
-        canvas.addEventListener("dragenter", preventDefault);
-        canvas.addEventListener("dragover", preventDefault);
-        canvas.addEventListener("dragleave", preventDefault);
-        canvas.addEventListener("contextmenu", preventDefault);
-        canvas.addEventListener("mousedown", onMouseDown);
-        document.addEventListener("pointerlockchange", onPointerLockChange);
-        this.update();
+        window.addEventListener("blur", onBlur);
     }
 }
 export { FPSControls };

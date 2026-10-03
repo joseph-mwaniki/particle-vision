@@ -11,7 +11,7 @@ export class SplatViewer {
   private scene: SPLAT.Scene;
   private camera: SPLAT.Camera;
   private renderer: SPLAT.WebGLRenderer;
-  private controls: SPLAT.OrbitControls;
+  private controls: SPLAT.FPSControls;
   private renderLoopRunning = false;
   private collisionMeshLoaded = false;
 
@@ -19,21 +19,13 @@ export class SplatViewer {
     this.scene = new SPLAT.Scene();
     this.camera = new SPLAT.Camera();
     this.renderer = new SPLAT.WebGLRenderer(options.canvas);
-    this.controls = new SPLAT.OrbitControls(
-      this.camera,
-      this.renderer.canvas,
-      0.5,
-      0.5,
-      5,
-      false
-    );
+    this.controls = new SPLAT.FPSControls(this.camera, this.renderer.canvas);
 
     const handleResize = () => {
       this.renderer.setSize(options.canvas.clientWidth, options.canvas.clientHeight);
     };
     handleResize();
     window.addEventListener("resize", handleResize);
-    this.setupKeyboardControls();
   }
 
   async loadSplat(url: string): Promise<void> {
@@ -80,45 +72,4 @@ export class SplatViewer {
     requestAnimationFrame(frame);
   }
 
-  private setupKeyboardControls(): void {
-    window.addEventListener("keydown", (e: KeyboardEvent) => {
-      const R = SPLAT.Matrix3.RotationFromQuaternion(this.camera.rotation).buffer;
-      const forward = normalize(new SPLAT.Vector3(-R[2], -R[5], -R[8]));
-      const right = normalize(new SPLAT.Vector3(R[0], R[3], R[6]));
-      const up = normalize(new SPLAT.Vector3(R[1], R[4], R[7]));
-
-      const step = 0.4;
-      const rotStep = 0.08;
-      let moved = false;
-      let rotated = false;
-
-      const euler = this.camera.rotation.toEuler();
-      let pitch = euler.x;
-      let yaw = euler.y;
-
-      if (e.code === "KeyW") { this.camera.position = this.camera.position.subtract(forward.multiply(step)); moved = true; }
-      if (e.code === "KeyS") { this.camera.position = this.camera.position.add(forward.multiply(step)); moved = true; }
-      if (e.code === "KeyA") { this.camera.position = this.camera.position.subtract(right.multiply(step)); moved = true; }
-      if (e.code === "KeyD") { this.camera.position = this.camera.position.add(right.multiply(step)); moved = true; }
-      if (e.code === "KeyQ") { this.camera.position = this.camera.position.add(up.multiply(step)); moved = true; }
-      if (e.code === "KeyE") { this.camera.position = this.camera.position.subtract(up.multiply(step)); moved = true; }
-      if (e.code === "ArrowLeft") { yaw += rotStep; rotated = true; }
-      if (e.code === "ArrowRight") { yaw -= rotStep; rotated = true; }
-      if (e.code === "ArrowUp") { pitch += rotStep; rotated = true; }
-      if (e.code === "ArrowDown") { pitch -= rotStep; rotated = true; }
-
-      if (rotated) {
-        this.camera.rotation = SPLAT.Quaternion.FromEuler(new SPLAT.Vector3(pitch, yaw, 0));
-      }
-      if (moved || rotated) {
-        this.controls.update();
-      }
-    });
-  }
-}
-
-function normalize(v: SPLAT.Vector3): SPLAT.Vector3 {
-  const mag = Math.sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
-  if (mag === 0) return v;
-  return new SPLAT.Vector3(v.x / mag, v.y / mag, v.z / mag);
 }
