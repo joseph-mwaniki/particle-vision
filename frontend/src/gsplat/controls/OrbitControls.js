@@ -223,6 +223,7 @@ class OrbitControls {
             e.stopPropagation();
         };
         this.dispose = () => {
+            camera.removeEventListener("objectChanged", onCameraChange);
             canvas.removeEventListener("dragenter", preventDefault);
             canvas.removeEventListener("dragover", preventDefault);
             canvas.removeEventListener("dragleave", preventDefault);

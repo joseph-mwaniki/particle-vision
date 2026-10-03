@@ -34,6 +34,10 @@ const activeSceneTitle = document.getElementById("active-scene-title");
 const activeSceneId = document.getElementById("active-scene-id");
 const activeSceneBadge = document.getElementById("active-scene-badge");
 const canvas = document.getElementById("canvas");
+const navigationModeButtons = document.querySelectorAll("[data-navigation-mode]");
+const navigationControlsTitle = document.getElementById("navigation-controls-title");
+const walkControls = document.getElementById("walk-controls");
+const orbitControls = document.getElementById("orbit-controls");
 const viewerOverlay = document.getElementById("viewer-overlay");
 const viewerOverlayText = document.getElementById("viewer-overlay-text");
 const viewerProgressIndicator = document.getElementById("viewer-progress-indicator");
@@ -114,6 +118,24 @@ function initViewer() {
     }
     return viewer;
 }
+function setNavigationMode(mode) {
+    viewer?.setNavigationMode(mode);
+    navigationModeButtons.forEach((button) => {
+        const isActive = button.dataset.navigationMode === mode;
+        button.classList.toggle("active", isActive);
+        button.setAttribute("aria-pressed", String(isActive));
+    });
+    navigationControlsTitle.textContent = mode === "walk" ? "Walk Controls" : "Orbit Controls";
+    walkControls.toggleAttribute("hidden", mode !== "walk");
+    orbitControls.toggleAttribute("hidden", mode !== "orbit");
+}
+navigationModeButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+        const mode = button.dataset.navigationMode;
+        if (mode === "walk" || mode === "orbit")
+            setNavigationMode(mode);
+    });
+});
 // ---------------- BACKEND HEALTH & DATA SYNC ----------------
 async function updateBackendStatus() {
     const health = await checkHealth();

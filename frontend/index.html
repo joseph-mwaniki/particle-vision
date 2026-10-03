@@ -168,13 +168,23 @@
           </div>
 
           <div class="controls-hud" id="controls-hud">
-            <h3>Navigation Controls</h3>
-            <div class="controls-grid">
-              <div class="key-row"><span class="key-badge">Left Click + Drag</span><span>Orbit &amp; Rotate</span></div>
-              <div class="key-row"><span class="key-badge">Right Click / Wheel</span><span>Pan &amp; Zoom</span></div>
-              <div class="key-row"><span class="key-badge">W</span><span class="key-badge">S</span><span>Fly Forward / Back</span></div>
-              <div class="key-row"><span class="key-badge">A</span><span class="key-badge">D</span><span>Fly Left / Right</span></div>
-              <div class="key-row"><span class="key-badge">Q</span><span class="key-badge">E</span><span>Ascend / Descend</span></div>
+            <div class="navigation-mode-switch" role="group" aria-label="Navigation mode">
+              <button type="button" class="navigation-mode-button active" data-navigation-mode="walk" aria-pressed="true">Walk</button>
+              <button type="button" class="navigation-mode-button" data-navigation-mode="orbit" aria-pressed="false">Orbit</button>
+            </div>
+            <h3 id="navigation-controls-title">Walk Controls</h3>
+            <div class="controls-grid" id="walk-controls">
+              <div class="key-row"><span class="key-badge">Left Click + Drag</span><span>Look around</span></div>
+              <div class="key-row"><span class="key-badge">W</span><span class="key-badge">S</span><span>Forward / Back</span></div>
+              <div class="key-row"><span class="key-badge">A</span><span class="key-badge">D</span><span>Strafe left / right</span></div>
+            </div>
+            <div class="controls-grid" id="orbit-controls" hidden>
+              <div class="key-row"><span class="key-badge">Left Click + Drag</span><span>Orbit &amp; rotate</span></div>
+              <div class="key-row"><span class="key-badge">Right Drag</span><span>Pan</span></div>
+              <div class="key-row"><span class="key-badge">Wheel</span><span>Zoom</span></div>
+              <div class="key-row"><span class="key-badge">WASD</span><span>Move</span></div>
+              <div class="key-row"><span class="key-badge">Q / E</span><span>Ascend / descend</span></div>
+              <div class="key-row"><span class="key-badge">Arrow keys</span><span>Look around</span></div>
             </div>
           </div>
 
