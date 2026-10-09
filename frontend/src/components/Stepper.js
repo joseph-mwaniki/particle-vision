@@ -1,4 +1,5 @@
 export const PIPELINE_STEPS = [
+    { id: "frame-selection", label: "Frame Selection", icon: "🎞️" },
     { id: "colmap", label: "COLMAP", icon: "📷" },
     { id: "gsplat", label: "GSPLAT Training", icon: "✨" },
     { id: "collision", label: "Collision Mesh", icon: "🧊" },
@@ -7,11 +8,12 @@ export const PIPELINE_STEPS = [
 const STATUS_TO_STEP = {
     PENDING: -1,
     QUEUED: 0,
-    PROCESSING_COLMAP: 0,
-    PROCESSING_GSPLAT: 1,
-    PROCESSING_COLLISION: 2,
-    PROCESSING_EXPORT: 3,
-    COMPLETED: 4,
+    PROCESSING_FRAME_SELECTION: 0,
+    PROCESSING_COLMAP: 1,
+    PROCESSING_GSPLAT: 2,
+    PROCESSING_COLLISION: 3,
+    PROCESSING_EXPORT: 4,
+    COMPLETED: 5,
     FAILED: -2,
 };
 function extractStageDetail(status, logs) {
@@ -19,6 +21,7 @@ function extractStageDetail(status, logs) {
         return undefined;
     const lines = logs.split("\n").reverse();
     const prefixMap = {
+        PROCESSING_FRAME_SELECTION: "[frame",
         PROCESSING_COLMAP: "[COLMAP",
         PROCESSING_GSPLAT: "[gsplat",
         PROCESSING_COLLISION: "[collision",

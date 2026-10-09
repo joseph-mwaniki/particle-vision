@@ -73,17 +73,17 @@
           <!-- TAB 2: Upload & Training Pipeline -->
           <div class="tab-pane" id="pane-train" style="display: none;">
             <section class="panel upload-panel">
-              <h2>1. Upload Images</h2>
-              <p class="panel-subtitle">Create a ZIP containing your JPG/PNG photos.</p>
+              <h2>1. Upload Video</h2>
+              <p class="panel-subtitle">Upload a single video capture to run frame selection and reconstruction.</p>
               <div class="drop-zone" id="drop-zone">
-                <span class="upload-icon">📁</span>
-                <span class="drop-text">Drag &amp; Drop ZIP files here</span>
+                <span class="upload-icon">🎞️</span>
+                <span class="drop-text">Drag &amp; Drop video here</span>
                 <span class="or-text">or click to browse</span>
-                <input type="file" id="file-input" accept=".zip" multiple style="display: none" />
+                <input type="file" id="file-input" accept="video/*,.mp4,.mov,.m4v,.mkv,.avi,.webm,.wmv,.ts" style="display: none" />
               </div>
               <div class="selected-files" id="selected-files" aria-live="polite" hidden></div>
               <button type="button" class="btn btn-primary upload-selected-btn" id="btn-upload-selected" disabled>
-                Upload selected ZIPs
+                Upload video
               </button>
               <div class="upload-progress-container" id="upload-progress-container" style="display: none">
                 <div class="progress-bar-wrapper">
@@ -187,6 +187,25 @@
               <div class="key-row"><span class="key-badge">Arrow keys</span><span>Look around</span></div>
             </div>
           </div>
+
+          <section class="splat-transform-panel" aria-label="Splat transform">
+            <h3>Splat Transform</h3>
+            <div class="splat-transform-fields">
+              <label>Translate X<input id="transform-x" type="number" step="0.1" value="0" /></label>
+              <label>Translate Y<input id="transform-y" type="number" step="0.1" value="0" /></label>
+              <label>Translate Z<input id="transform-z" type="number" step="0.1" value="0" /></label>
+              <label>Rotate X<input id="rotate-x" type="number" step="1" value="0" /></label>
+              <label>Rotate Y<input id="rotate-y" type="number" step="1" value="0" /></label>
+              <label>Rotate Z<input id="rotate-z" type="number" step="1" value="0" /></label>
+              <label>Scale<input id="transform-scale" type="number" min="0.01" step="0.1" value="1" /></label>
+              <label>Voxel size<input id="voxel-resolution" type="number" min="0.05" step="0.05" value="0.2" /></label>
+            </div>
+            <div class="splat-transform-actions">
+              <button class="btn btn-sm btn-secondary" id="btn-apply-transform" type="button">Apply</button>
+              <button class="btn btn-sm btn-secondary" id="btn-voxelize" type="button">Voxelize</button>
+            </div>
+            <output id="splat-transform-status" aria-live="polite"></output>
+          </section>
 
           <div class="viewer-overlay" id="viewer-overlay" style="display: none">
             <div class="overlay-spinner"></div>

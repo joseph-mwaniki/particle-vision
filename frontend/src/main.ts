@@ -1,7 +1,7 @@
 import {
   checkHealth,
   listJobs,
-  uploadZipFiles,
+  uploadVideoFiles,
   startTraining,
   assetUrl,
   listSplats,
@@ -10,6 +10,7 @@ import {
   updateSplat,
   publishSplat,
   deleteSplat,
+  uploadJobArtifact,
   type Job,
   type Splat,
 } from "./api";
@@ -46,7 +47,7 @@ const btnUploadSelected = document.getElementById("btn-upload-selected") as HTML
 const jobsList = document.getElementById("jobs-list")!;
 const logsConsole = document.getElementById("logs-console")!;
 
-let selectedZipFiles: File[] = [];
+let selectedVideoFiles: File[] = [];
 
 // DOM Elements - Viewer & Actions
 const activeSceneTitle = document.getElementById("active-scene-title")!;
@@ -66,6 +67,17 @@ const btnTrain = document.getElementById("btn-train") as HTMLButtonElement;
 const btnSaveCamera = document.getElementById("btn-save-camera") as HTMLButtonElement;
 const btnShareModal = document.getElementById("btn-share-modal") as HTMLButtonElement;
 const btnClientMode = document.getElementById("btn-client-mode") as HTMLButtonElement;
+const transformX = document.getElementById("transform-x") as HTMLInputElement;
+const transformY = document.getElementById("transform-y") as HTMLInputElement;
+const transformZ = document.getElementById("transform-z") as HTMLInputElement;
+const rotateX = document.getElementById("rotate-x") as HTMLInputElement;
+const rotateY = document.getElementById("rotate-y") as HTMLInputElement;
+const rotateZ = document.getElementById("rotate-z") as HTMLInputElement;
+const transformScale = document.getElementById("transform-scale") as HTMLInputElement;
+const voxelResolution = document.getElementById("voxel-resolution") as HTMLInputElement;
+const btnApplyTransform = document.getElementById("btn-apply-transform") as HTMLButtonElement;
+const btnVoxelize = document.getElementById("btn-voxelize") as HTMLButtonElement;
+const transformStatus = document.getElementById("splat-transform-status") as HTMLOutputElement;
 
 // DOM Elements - Showcase Client Banner
 const showcaseBanner = document.getElementById("showcase-banner")!;
@@ -811,14 +823,14 @@ fileInput.addEventListener("change", () => {
   fileInput.value = "";
 });
 
-btnUploadSelected.addEventListener("click", () => uploadFiles(selectedZipFiles));
+btnUploadSelected.addEventListener("click", () => uploadFiles(selectedVideoFiles));
 
 function addFiles(files: File[]): void {
-  const zipFiles = files.filter((file) => file.name.toLowerCase().endsWith(".zip"));
-  if (zipFiles.length !== files.length) alert("Only .zip files can be added.");
+  const videoFiles = files.filter((file) => /\.(mp4|mov|m4v|mkv|avi|webm|wmv|ts)$/i.test(file.name));
+  if (videoFiles.length !== files.length) alert("Only video files can be added.");
 
-  const existing = new Set(selectedZipFiles.map((file) => `${file.name}:${file.size}:${file.lastModified}`));
-  selectedZipFiles = [...selectedZipFiles, ...zipFiles.filter((file) => {
+  const existing = new Set(selectedVideoFiles.map((file) => `${file.name}:${file.size}:${file.lastModified}`));
+  selectedVideoFiles = [...selectedVideoFiles, ...videoFiles.filter((file) => {
     const key = `${file.name}:${file.size}:${file.lastModified}`;
     if (existing.has(key)) return false;
     existing.add(key);
@@ -829,14 +841,14 @@ function addFiles(files: File[]): void {
 
 function renderSelectedFiles(): void {
   selectedFilesElement.replaceChildren();
-  selectedFilesElement.hidden = selectedZipFiles.length === 0;
-  btnUploadSelected.disabled = selectedZipFiles.length === 0;
-  if (!selectedZipFiles.length) return;
+  selectedFilesElement.hidden = selectedVideoFiles.length === 0;
+  btnUploadSelected.disabled = selectedVideoFiles.length === 0;
+  if (!selectedVideoFiles.length) return;
 
   const heading = document.createElement("div");
-  heading.textContent = `${selectedZipFiles.length} ZIP file${selectedZipFiles.length === 1 ? "" : "s"} selected`;
+  heading.textContent = `${selectedVideoFiles.length} video file${selectedVideoFiles.length === 1 ? "" : "s"} selected`;
   selectedFilesElement.appendChild(heading);
-  selectedZipFiles.forEach((file) => {
+  selectedVideoFiles.forEach((file) => {
     const row = document.createElement("div");
     row.className = "selected-file";
     const name = document.createElement("span");
@@ -850,15 +862,15 @@ function renderSelectedFiles(): void {
 }
 
 async function uploadFiles(files: File[]): Promise<void> {
-  if (!files.length || files.some((file) => !file.name.toLowerCase().endsWith(".zip"))) {
-    alert("Please upload one or more .zip files containing images.");
+  if (!files.length || files.some((file) => !/\.(mp4|mov|m4v|mkv|avi|webm|wmv|ts)$/i.test(file.name))) {
+    alert("Please upload a supported video file for reconstruction.");
     return;
   }
 
   uploadProgressContainer.style.display = "block";
   btnUploadSelected.disabled = true;
   try {
-    const job = await uploadZipFiles(files, (pct) => {
+    const job = await uploadVideoFiles(files, (pct) => {
       uploadProgressFill.style.width = `${pct}%`;
       uploadProgressText.textContent = `Uploading: ${pct.toFixed(0)}%`;
     }, (stage) => {
@@ -866,7 +878,7 @@ async function uploadFiles(files: File[]): Promise<void> {
     });
     uploadProgressContainer.style.display = "none";
     uploadProgressFill.style.width = "0%";
-    selectedZipFiles = [];
+    selectedVideoFiles = [];
     renderSelectedFiles();
     await loadJobs();
     selectJob(job.id);
@@ -889,6 +901,85 @@ btnLoadSample.addEventListener("click", async () => {
 
 btnCapture.addEventListener("click", () => {
   viewer?.captureScreenshot(`splat-viewport-${activeSplat?.slug || activeJobId || "sample"}.png`);
+});
+
+function getCurrentSplatBlob(): Promise<Blob> {
+  const url = /^(https?:|blob:)/i.test(currentLoadedPath)
+    ? currentLoadedPath
+    : assetUrl(currentLoadedPath);
+  return fetch(url).then((response) => {
+    if (!response.ok) throw new Error(`Could not load splat source: ${response.status}`);
+    return response.blob();
+  });
+}
+
+function downloadArtifact(filename: string, blob: Blob): void {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+btnApplyTransform.addEventListener("click", async () => {
+  btnApplyTransform.disabled = true;
+  transformStatus.textContent = "Applying transforms...";
+  try {
+    const { transformSplat } = await import("./splat-transform");
+    const source = await getCurrentSplatBlob();
+    const processed = await transformSplat(source, {
+      translation: [Number(transformX.value), Number(transformY.value), Number(transformZ.value)],
+      rotation: [Number(rotateX.value), Number(rotateY.value), Number(rotateZ.value)],
+      scale: Number(transformScale.value),
+    });
+    const previewUrl = URL.createObjectURL(processed);
+    currentLoadedPath = previewUrl;
+    await initViewer().loadSplat(previewUrl);
+    if (activeJobId) {
+      const job = await uploadJobArtifact(activeJobId, "processed-splat", processed);
+      currentJobs = currentJobs.map((item) => item.id === job.id ? job : item);
+      transformStatus.textContent = "Processed splat saved to R2.";
+    } else {
+      downloadArtifact("processed-scene.splat", processed);
+      transformStatus.textContent = "Processed splat loaded and downloaded.";
+    }
+  } catch (error) {
+    transformStatus.textContent = error instanceof Error ? error.message : "Transform failed.";
+  } finally {
+    btnApplyTransform.disabled = false;
+  }
+});
+
+btnVoxelize.addEventListener("click", async () => {
+  btnVoxelize.disabled = true;
+  transformStatus.textContent = "Voxelizing with WebGPU...";
+  try {
+    const { voxelizeSplat } = await import("./splat-transform");
+    const source = await getCurrentSplatBlob();
+    const artifacts = await voxelizeSplat(source, Number(voxelResolution.value), (stage) => {
+      transformStatus.textContent = stage;
+    });
+    if (activeJobId) {
+      for (const artifact of artifacts) {
+        const kind = artifact.filename.endsWith(".voxel.json")
+          ? "voxel-json"
+          : artifact.filename.endsWith(".voxel.bin")
+            ? "voxel-bin"
+            : "voxel-collision";
+        const job = await uploadJobArtifact(activeJobId, kind, artifact.blob);
+        currentJobs = currentJobs.map((item) => item.id === job.id ? job : item);
+      }
+      transformStatus.textContent = "Voxel data saved to R2.";
+    } else {
+      artifacts.forEach((artifact) => downloadArtifact(artifact.filename, artifact.blob));
+      transformStatus.textContent = `Generated ${artifacts.length} voxel artifact${artifacts.length === 1 ? "" : "s"}.`;
+    }
+  } catch (error) {
+    transformStatus.textContent = error instanceof Error ? error.message : "Voxelization failed.";
+  } finally {
+    btnVoxelize.disabled = false;
+  }
 });
 
 // ---------------- INITIALIZATION & URL ROUTE HANDLING ----------------

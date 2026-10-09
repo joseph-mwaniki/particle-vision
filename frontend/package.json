@@ -9,7 +9,10 @@
     "preview": "vite preview",
     "download-sample": "curl -L -o public/samples/bonsai.splat https://huggingface.co/datasets/dylanebert/3dgs/resolve/main/bonsai/bonsai-7k-mini.splat"
   },
-  "dependencies": {},
+  "dependencies": {
+    "@playcanvas/splat-transform": "^3.9.0",
+    "playcanvas": "^2.23.0"
+  },
   "devDependencies": {
     "typescript": "^5.8.3",
     "vite": "^7.0.4"

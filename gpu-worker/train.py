@@ -10,6 +10,7 @@ from config import (
     STAGE_COLLISION,
     STAGE_COMPLETED,
     STAGE_EXPORT,
+    STAGE_FRAME_SELECTION,
     STAGE_GSPLAT,
     STAGE_QUEUED,
     WORK_DIR,
@@ -21,7 +22,7 @@ from pipeline import (
     train_gsplat,
     upload_results,
 )
-from pipeline.utils import download_file, extract_images_zips
+from pipeline.utils import download_file, extract_frames_from_video
 
 logger = logging.getLogger(__name__)
 
@@ -33,9 +34,9 @@ def _download_source_archives(
     source_files: list[dict[str, str]],
     on_log: Optional[CallbackFn] = None,
 ) -> tuple[Path, list[Path]]:
-    """Download source ZIPs from signed object URLs into the temporary job workspace."""
+    """Download source videos from signed object URLs into the temporary job workspace."""
     work_dir = WORK_DIR / "jobs" / job_id
-    source_dir = work_dir / "source-zips"
+    source_dir = work_dir / "source-videos"
     source_dir.mkdir(parents=True, exist_ok=True)
     archives = []
     for index, source in enumerate(source_files, start=1):
@@ -113,11 +114,17 @@ def run_full_pipeline(
 
     _last_progress: dict[str, int] = {"value": 5}
 
-    on_status(STAGE_QUEUED, "Job accepted — starting COLMAP reconstruction", 5)
+    on_status(STAGE_QUEUED, "Job accepted — starting video frame selection", 5)
 
-    images_dir = extract_images_zips(source_archives, work_dir, on_log=on_log)
+    video_path = source_archives[0]
+    if not video_path.exists():
+        raise RuntimeError(f"Video input is missing: {video_path}")
+
+    selected_frames = extract_frames_from_video(video_path, work_dir, on_log=on_log)
+    on_status(STAGE_FRAME_SELECTION, f"Selected {len(list(selected_frames.glob('*.jpg')))} ordered frames for reconstruction", 18)
+
     colmap_dir = run_colmap(
-        images_dir,
+        selected_frames,
         work_dir / "colmap",
         on_log=on_log,
         on_progress=on_colmap_progress,

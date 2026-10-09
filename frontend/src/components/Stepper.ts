@@ -1,6 +1,7 @@
 export type JobStatus =
   | "PENDING"
   | "QUEUED"
+  | "PROCESSING_FRAME_SELECTION"
   | "PROCESSING_COLMAP"
   | "PROCESSING_GSPLAT"
   | "PROCESSING_COLLISION"
@@ -15,6 +16,7 @@ export interface StepperStep {
 }
 
 export const PIPELINE_STEPS: StepperStep[] = [
+  { id: "frame-selection", label: "Frame Selection", icon: "🎞️" },
   { id: "colmap", label: "COLMAP", icon: "📷" },
   { id: "gsplat", label: "GSPLAT Training", icon: "✨" },
   { id: "collision", label: "Collision Mesh", icon: "🧊" },
@@ -24,11 +26,12 @@ export const PIPELINE_STEPS: StepperStep[] = [
 const STATUS_TO_STEP: Record<string, number> = {
   PENDING: -1,
   QUEUED: 0,
-  PROCESSING_COLMAP: 0,
-  PROCESSING_GSPLAT: 1,
-  PROCESSING_COLLISION: 2,
-  PROCESSING_EXPORT: 3,
-  COMPLETED: 4,
+  PROCESSING_FRAME_SELECTION: 0,
+  PROCESSING_COLMAP: 1,
+  PROCESSING_GSPLAT: 2,
+  PROCESSING_COLLISION: 3,
+  PROCESSING_EXPORT: 4,
+  COMPLETED: 5,
   FAILED: -2,
 };
 
@@ -45,6 +48,7 @@ function extractStageDetail(status: JobStatus, logs: string | null): string | un
   if (!logs) return undefined;
   const lines = logs.split("\n").reverse();
   const prefixMap: Record<string, string> = {
+    PROCESSING_FRAME_SELECTION: "[frame",
     PROCESSING_COLMAP: "[COLMAP",
     PROCESSING_GSPLAT: "[gsplat",
     PROCESSING_COLLISION: "[collision",

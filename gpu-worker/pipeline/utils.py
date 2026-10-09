@@ -1,5 +1,6 @@
 """Shared pipeline utilities."""
 
+import json
 import logging
 import re
 import shutil
@@ -53,6 +54,69 @@ def extract_images_zips(zip_paths: list[Path], dest_dir: Path, on_log: Optional[
     if on_log:
         on_log(f"Extracted {image_count} images from {len(zip_paths)} ZIP file(s)")
     return images_dir
+
+
+def extract_frames_from_video(
+    video_path: Path,
+    dest_dir: Path,
+    on_log: Optional[LogFn] = None,
+    fps: float = 1.0,
+) -> Path:
+    """Extract a video into an ordered image sequence under dest_dir/frames/.
+
+    This acts as an adapter around the frame-selection stage. If an external frame-
+    extractor implementation is available via FRAME_EXTRACTOR_PATH, it is invoked.
+    Otherwise this falls back to ffmpeg to produce a stable sequence of JPEG frames
+    suitable for COLMAP.
+    """
+    frames_dir = ensure_dir(dest_dir / "frames")
+    if frames_dir.exists():
+        for item in sorted(frames_dir.iterdir(), reverse=True):
+            if item.is_file() or item.is_symlink():
+                item.unlink()
+            elif item.is_dir():
+                shutil.rmtree(item)
+
+    external = Path(__import__("os").environ.get("FRAME_EXTRACTOR_PATH", "")).expanduser()
+    if external and external.is_file():
+        if on_log:
+            on_log(f"Using external frame extractor: {external}")
+        subprocess.run([str(external), str(video_path), str(frames_dir)], check=True)
+        image_files = sorted(frames_dir.glob("*"))
+        if not image_files:
+            raise RuntimeError("External frame extractor produced no output frames")
+        return frames_dir
+
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        raise RuntimeError("ffmpeg is required to extract frames from video, and no external frame extractor is configured")
+
+    if on_log:
+        on_log(f"Extracting frames from {video_path.name} into {frames_dir}")
+    subprocess.run([
+        ffmpeg,
+        "-y",
+        "-i",
+        str(video_path),
+        "-vf",
+        f"fps={fps}",
+        "-q:v",
+        "2",
+        str(frames_dir / "%06d.jpg"),
+    ], check=True, capture_output=True, text=True)
+
+    frame_files = sorted(frames_dir.glob("*.jpg"))
+    if not frame_files:
+        raise RuntimeError("No frames were extracted from the video input")
+
+    metadata = {
+        "source_video": video_path.name,
+        "frame_count": len(frame_files),
+        "fps": fps,
+        "ordered_frames": [p.name for p in frame_files],
+    }
+    (frames_dir / "frame_selection.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+    return frames_dir
 
 
 def run_command(
