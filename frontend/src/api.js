@@ -157,6 +157,39 @@ export async function uploadJobArtifact(jobId, kind, blob) {
         throw new Error(await completeResponse.text());
     return completeResponse.json();
 }
+export async function uploadSplatArtifact(splatId, kind, blob) {
+    const apiKey = localStorage.getItem("pv_api_key");
+    const headers = {};
+    if (apiKey)
+        headers["x-api-key"] = apiKey;
+    const initResponse = await fetch(`${API_BASE}/splats/${encodeURIComponent(splatId)}/artifacts/${kind}`, {
+        method: "POST",
+        headers,
+    });
+    if (!initResponse.ok)
+        throw new Error(await initResponse.text());
+    const upload = await initResponse.json();
+    const uploadResponse = await fetch(upload.url, {
+        method: "PUT",
+        headers: {
+            "Content-Type": kind === "voxel-json"
+                ? "application/json"
+                : kind === "voxel-collision"
+                    ? "model/gltf-binary"
+                    : "application/octet-stream",
+        },
+        body: blob,
+    });
+    if (!uploadResponse.ok)
+        throw new Error(`R2 artifact upload failed: ${uploadResponse.status}`);
+    const completeResponse = await fetch(`${API_BASE}/splats/${encodeURIComponent(splatId)}/artifacts/${kind}/complete`, {
+        method: "POST",
+        headers,
+    });
+    if (!completeResponse.ok)
+        throw new Error(await completeResponse.text());
+    return completeResponse.json();
+}
 // ---------------- SPLATS & SHOWCASE API ----------------
 export async function listSplats(onlyPublished = false) {
     const url = `${API_BASE}/splats${onlyPublished ? "?published=true" : ""}`;

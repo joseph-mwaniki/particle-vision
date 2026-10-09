@@ -52,26 +52,11 @@ class OrbitControls {
         };
         const onKeyDown = (e) => {
             keys[e.code] = true;
-            // Map arrow keys to WASD keys
-            if (e.code === "ArrowUp")
-                keys["KeyW"] = true;
-            if (e.code === "ArrowDown")
-                keys["KeyS"] = true;
-            if (e.code === "ArrowLeft")
-                keys["KeyA"] = true;
-            if (e.code === "ArrowRight")
-                keys["KeyD"] = true;
+            if (e.code.startsWith("Arrow"))
+                e.preventDefault();
         };
         const onKeyUp = (e) => {
-            keys[e.code] = false; // Map arrow keys to WASD keys
-            if (e.code === "ArrowUp")
-                keys["KeyW"] = false;
-            if (e.code === "ArrowDown")
-                keys["KeyS"] = false;
-            if (e.code === "ArrowLeft")
-                keys["KeyA"] = false;
-            if (e.code === "ArrowRight")
-                keys["KeyD"] = false;
+            keys[e.code] = false;
         };
         const onMouseDown = (e) => {
             preventDefault(e);
@@ -206,16 +191,26 @@ class OrbitControls {
                 desiredTarget = desiredTarget.subtract(right.multiply(moveSpeed));
             if (keys["KeyD"])
                 desiredTarget = desiredTarget.add(right.multiply(moveSpeed));
-            // Add rotation with 'e' and 'q' for horizontal rotation
+            // Ascend/descend with E and Q (E = ascend, Q = descend)
+            const up = new Vector3(0, 1, 0);
+            const elevateSpeed = 0.05;
             if (keys["KeyE"])
-                desiredAlpha += rotateSpeed;
+                desiredTarget = desiredTarget.add(up.multiply(elevateSpeed));
             if (keys["KeyQ"])
-                desiredAlpha -= rotateSpeed;
-            // Add rotation with 'r' and 'f' for vertical rotation
-            if (keys["KeyR"])
-                desiredBeta += rotateSpeed;
-            if (keys["KeyF"])
-                desiredBeta -= rotateSpeed;
+                desiredTarget = desiredTarget.subtract(up.multiply(elevateSpeed));
+            // Arrow keys: look around / orbit
+            if (keys["ArrowLeft"])
+                desiredAlpha -= rotateSpeed * 1.5;
+            if (keys["ArrowRight"])
+                desiredAlpha += rotateSpeed * 1.5;
+            if (keys["ArrowUp"]) {
+                desiredBeta += rotateSpeed * 1.5;
+                desiredBeta = Math.min(desiredBeta, (this.maxAngle * Math.PI) / 180);
+            }
+            if (keys["ArrowDown"]) {
+                desiredBeta -= rotateSpeed * 1.5;
+                desiredBeta = Math.max(desiredBeta, (this.minAngle * Math.PI) / 180);
+            }
             isUpdatingCamera = false;
         };
         const preventDefault = (e) => {

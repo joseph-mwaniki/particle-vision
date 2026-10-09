@@ -8,7 +8,25 @@ import {
   deleteSplat,
   incrementSplatViews,
 } from "../db";
-import { getObjectUrl } from "../services/objectStorage";
+import { getObjectUrl, headObject, presignObjectUpload } from "../services/objectStorage";
+
+const SPLAT_ARTIFACT_TYPES = {
+  "processed-splat": { extension: "processed.splat", contentType: "application/octet-stream", field: "processedSplatPath" },
+  "voxel-json": { extension: "voxel/scene.voxel.json", contentType: "application/json", field: "voxelPath" },
+  "voxel-bin": { extension: "voxel/scene.voxel.bin", contentType: "application/octet-stream", field: null },
+  "voxel-collision": { extension: "voxel/scene.collision.glb", contentType: "model/gltf-binary", field: "collisionPath" },
+} as const;
+
+type SplatArtifactType = keyof typeof SPLAT_ARTIFACT_TYPES;
+
+function isSplatArtifactType(value: string): value is SplatArtifactType {
+  return Object.hasOwn(SPLAT_ARTIFACT_TYPES, value);
+}
+
+function artifactAuthorized(req: Request): boolean {
+  const configuredKey = process.env.API_KEY;
+  return !configuredKey || req.headers["x-api-key"] === configuredKey;
+}
 
 function getBaseUrls(req: Request) {
   const frontendUrl =
@@ -29,15 +47,19 @@ async function formatSplatResponse(splat: any, req: Request) {
     if (key.startsWith("/") || /^https?:\/\//i.test(key)) return Promise.resolve(key);
     return getObjectUrl(key, usePublicDelivery);
   };
-  const [splatUrl, collisionUrl] = await Promise.all([
+  const [splatUrl, collisionUrl, processedSplatUrl, voxelUrl] = await Promise.all([
     assetUrl(splat.splatPath),
     assetUrl(splat.collisionPath),
+    assetUrl(splat.processedSplatPath || null),
+    assetUrl(splat.voxelPath || null),
   ]);
 
   return {
     ...splat,
     splatUrl,
     collisionUrl,
+    processedSplatUrl,
+    voxelUrl,
     publicUrl,
     previewDraftUrl,
     embedCode,
@@ -189,6 +211,48 @@ export function createSplatRouter(): Router {
       res.json({ success: true, message: "Splat deleted successfully" });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Failed to delete splat";
+      res.status(500).json({ error: message });
+    }
+  });
+
+  // Prepare artifact upload for Splat scene
+  router.post("/:id/artifacts/:kind", async (req: Request, res: Response) => {
+    try {
+      if (!artifactAuthorized(req)) return res.status(401).json({ error: "Unauthorized" });
+      const splat = await getSplat(req.params.id);
+      if (!splat) return res.status(404).json({ error: "Splat not found" });
+      if (!isSplatArtifactType(req.params.kind)) return res.status(400).json({ error: "Unsupported artifact type" });
+
+      const artifact = SPLAT_ARTIFACT_TYPES[req.params.kind];
+      const key = `splats/${splat.id}/${artifact.extension}`;
+      const url = await presignObjectUpload(key, artifact.contentType);
+      res.json({ key, url });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Failed to prepare splat artifact upload";
+      res.status(500).json({ error: message });
+    }
+  });
+
+  // Complete artifact upload for Splat scene
+  router.post("/:id/artifacts/:kind/complete", async (req: Request, res: Response) => {
+    try {
+      if (!artifactAuthorized(req)) return res.status(401).json({ error: "Unauthorized" });
+      const splat = await getSplat(req.params.id);
+      if (!splat) return res.status(404).json({ error: "Splat not found" });
+      if (!isSplatArtifactType(req.params.kind)) return res.status(400).json({ error: "Unsupported artifact type" });
+
+      const artifact = SPLAT_ARTIFACT_TYPES[req.params.kind];
+      const key = `splats/${splat.id}/${artifact.extension}`;
+      const stored = await headObject(key);
+      if (!stored.ContentLength) return res.status(400).json({ error: "Uploaded artifact is missing or empty" });
+
+      const updated = artifact.field
+        ? await updateSplat(splat.id, { [artifact.field]: key })
+        : splat;
+      if (!updated) return res.status(404).json({ error: "Splat not found" });
+      res.json(await formatSplatResponse(updated, req));
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Failed to confirm splat artifact upload";
       res.status(500).json({ error: message });
     }
   });

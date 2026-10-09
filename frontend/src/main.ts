@@ -11,6 +11,7 @@ import {
   publishSplat,
   deleteSplat,
   uploadJobArtifact,
+  uploadSplatArtifact,
   type Job,
   type Splat,
 } from "./api";
@@ -61,10 +62,11 @@ const orbitControls = document.getElementById("orbit-controls")!;
 const viewerOverlay = document.getElementById("viewer-overlay")!;
 const viewerOverlayText = document.getElementById("viewer-overlay-text")!;
 const viewerProgressIndicator = document.getElementById("viewer-progress-indicator") as HTMLProgressElement;
-const btnCapture = document.getElementById("btn-capture") as HTMLButtonElement;
 const btnLoadSample = document.getElementById("btn-load-sample") as HTMLButtonElement;
 const btnTrain = document.getElementById("btn-train") as HTMLButtonElement;
-const btnSaveCamera = document.getElementById("btn-save-camera") as HTMLButtonElement;
+const btnToggleTransform = document.getElementById("btn-toggle-transform") as HTMLButtonElement;
+const btnCloseTransform = document.getElementById("btn-close-transform") as HTMLButtonElement;
+const splatTransformPanel = document.getElementById("splat-transform-panel") as HTMLElement;
 const btnShareModal = document.getElementById("btn-share-modal") as HTMLButtonElement;
 const btnClientMode = document.getElementById("btn-client-mode") as HTMLButtonElement;
 const transformX = document.getElementById("transform-x") as HTMLInputElement;
@@ -623,28 +625,18 @@ formSaveSplat.addEventListener("submit", async (e) => {
   }
 });
 
-// Save Angle / Camera config
-btnSaveCamera.addEventListener("click", async () => {
-  if (!activeSplat) {
-    alert("Please save or select a database Splat first to store its camera viewpoint.");
-    return;
-  }
-  try {
-    btnSaveCamera.textContent = "Saving Angle...";
-    await updateSplat(activeSplat.id, {
-      cameraConfig: {
-        position: [0, 1, 2],
-        target: [0, 0, 0],
-      },
-    });
-    btnSaveCamera.textContent = "Angle Saved!";
-    setTimeout(() => {
-      btnSaveCamera.innerHTML = `<span class="btn-icon">📐</span> Save Angle`;
-    }, 2000);
-  } catch (err: unknown) {
-    alert(err instanceof Error ? err.message : "Failed to save angle");
-    btnSaveCamera.innerHTML = `<span class="btn-icon">📐</span> Save Angle`;
-  }
+// Toggle Splat Transform Panel
+btnToggleTransform?.addEventListener("click", () => {
+  const isHidden = splatTransformPanel.style.display === "none";
+  splatTransformPanel.style.display = isHidden ? "block" : "none";
+  btnToggleTransform.classList.toggle("btn-accent", isHidden);
+  btnToggleTransform.classList.toggle("btn-secondary", !isHidden);
+});
+
+btnCloseTransform?.addEventListener("click", () => {
+  splatTransformPanel.style.display = "none";
+  btnToggleTransform?.classList.remove("btn-accent");
+  btnToggleTransform?.classList.add("btn-secondary");
 });
 
 // ---------------- TAB NAVIGATION & FILTERS ----------------
@@ -899,10 +891,6 @@ btnLoadSample.addEventListener("click", async () => {
   await v.loadSplat("/samples/bonsai.splat");
 });
 
-btnCapture.addEventListener("click", () => {
-  viewer?.captureScreenshot(`splat-viewport-${activeSplat?.slug || activeJobId || "sample"}.png`);
-});
-
 function getCurrentSplatBlob(): Promise<Blob> {
   const url = /^(https?:|blob:)/i.test(currentLoadedPath)
     ? currentLoadedPath
@@ -911,15 +899,6 @@ function getCurrentSplatBlob(): Promise<Blob> {
     if (!response.ok) throw new Error(`Could not load splat source: ${response.status}`);
     return response.blob();
   });
-}
-
-function downloadArtifact(filename: string, blob: Blob): void {
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = filename;
-  link.click();
-  URL.revokeObjectURL(url);
 }
 
 btnApplyTransform.addEventListener("click", async () => {
@@ -936,13 +915,20 @@ btnApplyTransform.addEventListener("click", async () => {
     const previewUrl = URL.createObjectURL(processed);
     currentLoadedPath = previewUrl;
     await initViewer().loadSplat(previewUrl);
-    if (activeJobId) {
+
+    if (activeSplat) {
+      transformStatus.textContent = "Saving transformed splat to R2...";
+      const updatedSplat = await uploadSplatArtifact(activeSplat.id, "processed-splat", processed);
+      activeSplat = updatedSplat;
+      currentSplats = currentSplats.map((item) => (item.id === updatedSplat.id ? updatedSplat : item));
+      transformStatus.textContent = "Transformed splat active in viewer and saved to database.";
+    } else if (activeJobId) {
+      transformStatus.textContent = "Saving transformed splat to R2...";
       const job = await uploadJobArtifact(activeJobId, "processed-splat", processed);
-      currentJobs = currentJobs.map((item) => item.id === job.id ? job : item);
-      transformStatus.textContent = "Processed splat saved to R2.";
+      currentJobs = currentJobs.map((item) => (item.id === job.id ? job : item));
+      transformStatus.textContent = "Transformed splat active in viewer and saved to job.";
     } else {
-      downloadArtifact("processed-scene.splat", processed);
-      transformStatus.textContent = "Processed splat loaded and downloaded.";
+      transformStatus.textContent = "Transformed splat active in viewer.";
     }
   } catch (error) {
     transformStatus.textContent = error instanceof Error ? error.message : "Transform failed.";
@@ -960,7 +946,31 @@ btnVoxelize.addEventListener("click", async () => {
     const artifacts = await voxelizeSplat(source, Number(voxelResolution.value), (stage) => {
       transformStatus.textContent = stage;
     });
-    if (activeJobId) {
+
+    // Immediately activate collision in viewer with the generated GLB collision mesh
+    const glbArtifact = artifacts.find((a) => a.filename.endsWith(".glb"));
+    if (glbArtifact) {
+      const collisionBlobUrl = URL.createObjectURL(glbArtifact.blob);
+      await initViewer().loadCollisionMesh(collisionBlobUrl);
+    }
+
+    // Persist artifacts to Cloudflare R2 and update database record without triggering file downloads
+    if (activeSplat) {
+      transformStatus.textContent = "Saving collision and voxel artifacts to database...";
+      for (const artifact of artifacts) {
+        const kind = artifact.filename.endsWith(".voxel.json")
+          ? "voxel-json"
+          : artifact.filename.endsWith(".voxel.bin")
+            ? "voxel-bin"
+            : "voxel-collision";
+        const updatedSplat = await uploadSplatArtifact(activeSplat.id, kind, artifact.blob);
+        activeSplat = updatedSplat;
+        currentSplats = currentSplats.map((item) => (item.id === updatedSplat.id ? updatedSplat : item));
+      }
+      renderSplatsList();
+      transformStatus.textContent = "Voxelized! Collision mesh now active and saved to database.";
+    } else if (activeJobId) {
+      transformStatus.textContent = "Saving collision and voxel artifacts to job...";
       for (const artifact of artifacts) {
         const kind = artifact.filename.endsWith(".voxel.json")
           ? "voxel-json"
@@ -968,12 +978,11 @@ btnVoxelize.addEventListener("click", async () => {
             ? "voxel-bin"
             : "voxel-collision";
         const job = await uploadJobArtifact(activeJobId, kind, artifact.blob);
-        currentJobs = currentJobs.map((item) => item.id === job.id ? job : item);
+        currentJobs = currentJobs.map((item) => (item.id === job.id ? job : item));
       }
-      transformStatus.textContent = "Voxel data saved to R2.";
+      transformStatus.textContent = "Voxelized! Collision mesh now active and saved to job.";
     } else {
-      artifacts.forEach((artifact) => downloadArtifact(artifact.filename, artifact.blob));
-      transformStatus.textContent = `Generated ${artifacts.length} voxel artifact${artifacts.length === 1 ? "" : "s"}.`;
+      transformStatus.textContent = "Voxelized! Collision mesh is now active in the viewer.";
     }
   } catch (error) {
     transformStatus.textContent = error instanceof Error ? error.message : "Voxelization failed.";

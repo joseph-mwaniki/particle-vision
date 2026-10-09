@@ -5,9 +5,18 @@ class FPSControls {
     lookSpeed = 0.0025;
     acceleration = 12;
     friction = 10;
+    eyeHeight = 1.6;
+    playerRadius = 0.35;
+    collision = null;
+    setCollision = (c) => {
+        this.collision = c;
+    };
     update;
     dispose;
     constructor(camera, canvas) {
+        this.setCollision = (c) => {
+            this.collision = c;
+        };
         const keys = {};
         const originalCursor = canvas.style.cursor;
         let pitch = camera.rotation.toEuler().x;
@@ -96,7 +105,25 @@ class FPSControls {
             const targetVelocity = wish.multiply(this.moveSpeed);
             const rate = moving ? this.acceleration : this.friction;
             velocity = velocity.lerp(targetVelocity, Math.min(rate * dt, 1));
-            camera.position = camera.position.add(velocity.multiply(dt));
+            let nextPos = camera.position.add(velocity.multiply(dt));
+            if (this.collision) {
+                // Ground probe downward to maintain floor clearance
+                const groundHit = this.collision.queryRay(nextPos.x, nextPos.y + 0.5, nextPos.z, 0, -1, 0, 5.0);
+                if (groundHit) {
+                    const targetY = groundHit.y + this.eyeHeight;
+                    // Smoothly adjust ground height
+                    const currentY = nextPos.y;
+                    const diff = targetY - currentY;
+                    nextPos = new Vector3(nextPos.x, currentY + diff * Math.min(dt * 10, 1), nextPos.z);
+                }
+                // Obstacle / wall collision response
+                const push = { x: 0, y: 0, z: 0 };
+                const checkCenterY = nextPos.y - this.eyeHeight * 0.5;
+                if (this.collision.querySphere(nextPos.x, checkCenterY, nextPos.z, this.playerRadius, push)) {
+                    nextPos = new Vector3(nextPos.x + push.x, nextPos.y + push.y, nextPos.z + push.z);
+                }
+            }
+            camera.position = nextPos;
             camera.rotation = Quaternion.FromEuler(new Vector3(pitch, yaw, 0));
         };
         this.dispose = () => {

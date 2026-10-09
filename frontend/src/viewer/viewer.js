@@ -1,4 +1,5 @@
 import * as SPLAT from "../gsplat";
+import { MeshCollision } from "./collision";
 export class SplatViewer {
     options;
     scene;
@@ -7,74 +8,14 @@ export class SplatViewer {
     controls;
     navigationMode = "walk";
     renderLoopRunning = false;
+    collisionMesh = null;
     collisionMeshLoaded = false;
-    handleKeyboardInput = (e) => {
-        if (this.navigationMode !== "orbit")
-            return;
-        const rotation = SPLAT.Matrix3.RotationFromQuaternion(this.camera.rotation).buffer;
-        const forward = new SPLAT.Vector3(-rotation[2], -rotation[5], -rotation[8]).normalize();
-        const right = new SPLAT.Vector3(rotation[0], rotation[3], rotation[6]).normalize();
-        const up = new SPLAT.Vector3(rotation[1], rotation[4], rotation[7]).normalize();
-        const step = 0.4;
-        const turnStep = 0.08;
-        const euler = this.camera.rotation.toEuler();
-        let pitch = euler.x;
-        let yaw = euler.y;
-        let moved = false;
-        let turned = false;
-        if (e.code === "KeyW") {
-            this.camera.position = this.camera.position.subtract(forward.multiply(step));
-            moved = true;
-        }
-        if (e.code === "KeyS") {
-            this.camera.position = this.camera.position.add(forward.multiply(step));
-            moved = true;
-        }
-        if (e.code === "KeyA") {
-            this.camera.position = this.camera.position.subtract(right.multiply(step));
-            moved = true;
-        }
-        if (e.code === "KeyD") {
-            this.camera.position = this.camera.position.add(right.multiply(step));
-            moved = true;
-        }
-        if (e.code === "KeyQ") {
-            this.camera.position = this.camera.position.add(up.multiply(step));
-            moved = true;
-        }
-        if (e.code === "KeyE") {
-            this.camera.position = this.camera.position.subtract(up.multiply(step));
-            moved = true;
-        }
-        if (e.code === "ArrowLeft") {
-            yaw += turnStep;
-            turned = true;
-        }
-        if (e.code === "ArrowRight") {
-            yaw -= turnStep;
-            turned = true;
-        }
-        if (e.code === "ArrowUp") {
-            pitch += turnStep;
-            turned = true;
-        }
-        if (e.code === "ArrowDown") {
-            pitch -= turnStep;
-            turned = true;
-        }
-        if (turned) {
-            this.camera.rotation = SPLAT.Quaternion.FromEuler(new SPLAT.Vector3(pitch, yaw, 0));
-        }
-        if (moved || turned)
-            this.controls.update();
-    };
     constructor(options) {
         this.options = options;
         this.scene = new SPLAT.Scene();
         this.camera = new SPLAT.Camera();
         this.renderer = new SPLAT.WebGLRenderer(options.canvas);
         this.controls = new SPLAT.FPSControls(this.camera, this.renderer.canvas);
-        window.addEventListener("keydown", this.handleKeyboardInput);
         const handleResize = () => {
             this.renderer.setSize(options.canvas.clientWidth, options.canvas.clientHeight);
         };
@@ -91,10 +32,14 @@ export class SplatViewer {
             const radius = 5;
             const lookDirection = this.camera.rotation.apply(new SPLAT.Vector3(0, 0, 1)).normalize();
             const target = this.camera.position.add(lookDirection.multiply(radius));
-            this.controls = new SPLAT.OrbitControls(this.camera, this.renderer.canvas, -euler.y, -euler.x, radius, false, target);
+            this.controls = new SPLAT.OrbitControls(this.camera, this.renderer.canvas, -euler.y, -euler.x, radius, true, target);
         }
         else {
-            this.controls = new SPLAT.FPSControls(this.camera, this.renderer.canvas);
+            const fps = new SPLAT.FPSControls(this.camera, this.renderer.canvas);
+            if (this.collisionMesh) {
+                fps.setCollision(this.collisionMesh);
+            }
+            this.controls = fps;
         }
     }
     async loadSplat(url) {
@@ -107,21 +52,31 @@ export class SplatViewer {
         this.startRenderLoop();
     }
     /**
-     * Load collision mesh for future physics/navigation.
-     * The mesh is invisible — intended for raycasting and collision detection only.
-     * Not yet implemented: requires a GLB loader (e.g. three.js GLTFLoader).
+     * Load collision mesh from GLB (.collision.glb).
+     * Enables ground snapping/navigation and collision pushout in walk mode.
      */
     async loadCollisionMesh(url) {
-        // Architecture placeholder: collision.glb will be loaded here invisibly
-        console.info("[viewer] Collision mesh ready to load (not yet implemented):", url);
-        this.collisionMeshLoaded = true;
+        try {
+            this.options.onProgress?.("Loading collision data...", 90);
+            const res = await fetch(url);
+            if (!res.ok) {
+                console.warn(`[viewer] Failed to fetch collision mesh: ${res.status}`);
+                return;
+            }
+            const buffer = await res.arrayBuffer();
+            this.collisionMesh = MeshCollision.fromGlbBuffer(buffer);
+            this.collisionMeshLoaded = true;
+            if (this.controls instanceof SPLAT.FPSControls) {
+                this.controls.setCollision(this.collisionMesh);
+            }
+            console.info(`[viewer] Collision mesh successfully loaded and active (${this.collisionMesh.triangleCount} triangles).`);
+        }
+        catch (err) {
+            console.warn("[viewer] Could not initialize collision mesh:", err);
+        }
     }
-    captureScreenshot(filename) {
-        const dataUrl = this.options.canvas.toDataURL("image/png");
-        const link = document.createElement("a");
-        link.download = filename;
-        link.href = dataUrl;
-        link.click();
+    hasCollision() {
+        return this.collisionMeshLoaded;
     }
     startRenderLoop() {
         if (this.renderLoopRunning)

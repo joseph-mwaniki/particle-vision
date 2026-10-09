@@ -237,6 +237,40 @@ export async function uploadJobArtifact(jobId: string, kind: JobArtifactKind, bl
   return completeResponse.json() as Promise<Job>;
 }
 
+export async function uploadSplatArtifact(splatId: string, kind: JobArtifactKind, blob: Blob): Promise<Splat> {
+  const apiKey = localStorage.getItem("pv_api_key");
+  const headers: Record<string, string> = {};
+  if (apiKey) headers["x-api-key"] = apiKey;
+
+  const initResponse = await fetch(`${API_BASE}/splats/${encodeURIComponent(splatId)}/artifacts/${kind}`, {
+    method: "POST",
+    headers,
+  });
+  if (!initResponse.ok) throw new Error(await initResponse.text());
+  const upload = await initResponse.json() as { key: string; url: string };
+
+  const uploadResponse = await fetch(upload.url, {
+    method: "PUT",
+    headers: {
+      "Content-Type":
+        kind === "voxel-json"
+          ? "application/json"
+          : kind === "voxel-collision"
+            ? "model/gltf-binary"
+            : "application/octet-stream",
+    },
+    body: blob,
+  });
+  if (!uploadResponse.ok) throw new Error(`R2 artifact upload failed: ${uploadResponse.status}`);
+
+  const completeResponse = await fetch(`${API_BASE}/splats/${encodeURIComponent(splatId)}/artifacts/${kind}/complete`, {
+    method: "POST",
+    headers,
+  });
+  if (!completeResponse.ok) throw new Error(await completeResponse.text());
+  return completeResponse.json() as Promise<Splat>;
+}
+
 // ---------------- SPLATS & SHOWCASE API ----------------
 
 export async function listSplats(onlyPublished = false): Promise<Splat[]> {
