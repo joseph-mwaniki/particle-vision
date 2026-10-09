@@ -187,6 +187,7 @@ export function isValidJobStatus(status: string): status is JobStatus {
   return [
     "PENDING",
     "QUEUED",
+    "PROCESSING_FRAME_SELECTION",
     "PROCESSING_COLMAP",
     "PROCESSING_GSPLAT",
     "PROCESSING_COLLISION",

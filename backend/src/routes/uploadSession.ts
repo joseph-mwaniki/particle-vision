@@ -37,8 +37,9 @@ function sessionResponse(session: any) {
   };
 }
 
-function isZipName(name: string) {
-  return name.toLowerCase().endsWith(".zip");
+function isVideoName(name: string) {
+  const normalized = name.toLowerCase();
+  return [".mp4", ".mov", ".m4v", ".mkv", ".avi", ".webm", ".wmv", ".ts"].some((ext) => normalized.endsWith(ext));
 }
 
 async function createJobForSession(sessionId: string) {
@@ -104,14 +105,15 @@ export function createUploadSessionRouter(): Router {
       const size = Number(req.body?.size);
       if (!session) return res.status(404).json({ error: "Upload session not found" });
       if (session.status !== "UPLOADING") return res.status(400).json({ error: `Session is ${session.status}` });
-      if (!isZipName(originalName)) return res.status(400).json({ error: "Only .zip files are supported" });
-      if (!Number.isSafeInteger(size) || size <= 0 || size > MAX_FILE_SIZE) return res.status(400).json({ error: "Invalid or oversized ZIP file" });
-      if (session.files.length >= MAX_FILES) return res.status(400).json({ error: `A maximum of ${MAX_FILES} ZIP files is allowed` });
+      if (!isVideoName(originalName)) return res.status(400).json({ error: "Only video files are supported" });
+      if (!Number.isSafeInteger(size) || size <= 0 || size > MAX_FILE_SIZE) return res.status(400).json({ error: "Invalid or oversized video file" });
+      if (session.files.length >= 1) return res.status(400).json({ error: "Only one video file is allowed per job" });
       const currentTotal = session.files.reduce((sum: number, file: any) => sum + Number(file.size), 0);
       if (currentTotal + size > MAX_TOTAL_SIZE) return res.status(400).json({ error: "The total dataset size is too large" });
 
       const fileId = `file_${crypto.randomUUID()}`;
-      const objectKey = `${session.storagePrefix}/source-${String(session.files.length + 1).padStart(3, "0")}.zip`;
+      const extension = originalName.includes(".") ? originalName.slice(originalName.lastIndexOf(".")) : ".mp4";
+      const objectKey = `${session.storagePrefix}/source-${String(session.files.length + 1).padStart(3, "0")}${extension}`;
       const multipartId = await createMultipartUpload(objectKey);
       const totalParts = Math.ceil(size / PART_SIZE);
       const urls = await Promise.all(Array.from({ length: totalParts }, (_, index) => presignUploadPart(objectKey, multipartId, index + 1)));
@@ -121,7 +123,7 @@ export function createUploadSessionRouter(): Router {
       await database.uploadSession.update({ where: { id: session.id }, data: { totalFiles: { increment: 1 }, totalSize: { increment: BigInt(size) } } });
       res.status(201).json({ fileId: file.id, partSize: PART_SIZE, totalParts, urls });
     } catch (error) {
-      res.status(500).json({ error: error instanceof Error ? error.message : "Failed to initialize ZIP upload" });
+      res.status(500).json({ error: error instanceof Error ? error.message : "Failed to initialize video upload" });
     }
   });
 
@@ -152,7 +154,7 @@ export function createUploadSessionRouter(): Router {
       const database = requireDatabase();
       const session = await database.uploadSession.findUnique({ where: { id: req.params.id }, include: { files: true } });
       if (!session) return res.status(404).json({ error: "Upload session not found" });
-      if (!session.files.length || session.files.some((file: any) => file.status !== "COMPLETE")) return res.status(400).json({ error: "All ZIP files must finish uploading first" });
+      if (!session.files.length || session.files.some((file: any) => file.status !== "COMPLETE")) return res.status(400).json({ error: "The video file must finish uploading first" });
       if (session.status !== "UPLOADING") return res.status(400).json({ error: `Session is already ${session.status}` });
       await createJobForSession(session.id);
       res.status(202).json({ id: session.id, status: "ASSEMBLED" });

@@ -1,6 +1,7 @@
 export type JobStatus =
   | "PENDING"
   | "QUEUED"
+  | "PROCESSING_FRAME_SELECTION"
   | "PROCESSING_COLMAP"
   | "PROCESSING_GSPLAT"
   | "PROCESSING_COLLISION"
@@ -15,8 +16,13 @@ export interface Job {
   createdAt: Date;
   updatedAt: Date;
   imagesPath: string;
+  videoPath?: string | null;
+  frameSelectionPath?: string | null;
   splatPath: string | null;
   collisionPath: string | null;
+  processedSplatPath?: string | null;
+  voxelPath?: string | null;
+  voxelCollisionPath?: string | null;
   logs: string | null;
   uploadSessionId?: string | null;
 }

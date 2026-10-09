@@ -8,18 +8,23 @@ datasource db {
 }
 
 model Job {
-  id              String         @id @default(cuid())
-  status          String
-  progress        Float          @default(0.0)
-  createdAt       DateTime       @default(now())
-  updatedAt       DateTime       @updatedAt
-  imagesPath      String
-  splatPath       String?
-  collisionPath   String?
-  logs            String?
-  uploadSessionId String?        @unique
-  uploadSession   UploadSession? @relation(fields: [uploadSessionId], references: [id])
-  Splats          Splat[]
+  id                    String         @id @default(cuid())
+  status                String
+  progress              Float          @default(0.0)
+  createdAt             DateTime       @default(now())
+  updatedAt             DateTime       @updatedAt
+  imagesPath            String
+  videoPath             String?
+  frameSelectionPath    String?
+  splatPath             String?
+  collisionPath         String?
+  processedSplatPath    String?
+  voxelPath             String?
+  voxelCollisionPath    String?
+  logs                  String?
+  uploadSessionId       String?        @unique
+  uploadSession         UploadSession? @relation(fields: [uploadSessionId], references: [id])
+  Splats                Splat[]
 }
 
 model UploadSession {
@@ -59,23 +64,25 @@ model UploadFile {
 }
 
 model Splat {
-  id            String    @id @default(uuid())
-  title         String
-  slug          String    @unique
-  description   String?
-  status        String    @default("draft")
-  splatPath     String
-  collisionPath String?
-  thumbnailUrl  String?
-  cameraConfig  Json?
-  shareToken    String    @unique @default(uuid())
-  views         Int       @default(0)
-  isPublic      Boolean   @default(true)
-  publishedAt   DateTime?
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
-  jobId         String?
-  Job           Job?      @relation(fields: [jobId], references: [id])
+  id                 String    @id @default(uuid())
+  title              String
+  slug               String    @unique
+  description        String?
+  status             String    @default("draft")
+  splatPath          String
+  processedSplatPath String?
+  collisionPath      String?
+  voxelPath          String?
+  thumbnailUrl       String?
+  cameraConfig       Json?
+  shareToken         String    @unique @default(uuid())
+  views              Int       @default(0)
+  isPublic           Boolean   @default(true)
+  publishedAt        DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+  jobId              String?
+  Job                Job?      @relation(fields: [jobId], references: [id])
 
   @@index([slug])
   @@index([status])
