@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Gaussian Splat Frame Selector</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <h1>Gaussian Splat Frame Selector</h1>
+      </header>
+
+      <main class="layout">
+        <section class="panel uploader-panel">
+          <div class="upload-box">
+            <input id="video-input" type="file" accept="video/*" multiple />
+            <button id="upload-button" class="primary">Choose Videos</button>
+          </div>
+
+          <div id="upload-list" class="upload-list" aria-live="polite"></div>
+
+          <div id="video-meta" class="video-meta hidden">
+            <h3 id="video-name">No file selected</h3>
+            <div id="job-status-banner" class="job-status-banner">Waiting for upload</div>
+          </div>
+
+          <button id="analyze-button" class="primary disabled" disabled>Analyze Videos</button>
+
+          <div class="progress-block">
+            <label>Processing</label>
+            <div class="progress-bar" role="progressbar" aria-label="Analysis progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+              <div id="progress-fill" class="progress-fill" style="width: 0%"></div>
+            </div>
+            <div id="progress-text" class="progress-text">Waiting for upload</div>
+          </div>
+
+          <div class="stats-grid">
+            <div class="stat"><span>Frames analyzed</span><strong id="stat-analyzed">0</strong></div>
+            <div class="stat"><span>Blurry</span><strong id="stat-blurry">0</strong></div>
+            <div class="stat"><span>Exposure rejected</span><strong id="stat-exposure">0</strong></div>
+            <div class="stat"><span>Redundant</span><strong id="stat-redundant">0</strong></div>
+            <div class="stat"><span>Selected</span><strong id="stat-selected">0</strong></div>
+          </div>
+
+          <div id="warnings" class="warnings"></div>
+        </section>
+
+        <section class="panel review-panel">
+          <div class="review-controls">
+            <button id="show-selected" class="tab active">Selected</button>
+            <button id="show-rejected" class="tab">Rejected</button>
+          </div>
+
+          <div id="review-grid" class="review-grid"></div>
+        </section>
+      </main>
+    </div>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>

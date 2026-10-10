@@ -65,12 +65,27 @@ def run_colmap(
         if not source_images.is_dir():
             raise RuntimeError(f"Images directory not found: {source_images}")
 
-    # gsplat Parser expects data_dir/images and data_dir/sparse/0
+    # gsplat Parser expects data_dir/images and data_dir/sparse/0.
+    # Copy only image files so COLMAP never sees manifests, videos, or rejected frames.
     dataset_images = ensure_dir(work_dir / "images")
     if source_images.resolve() != dataset_images.resolve():
         if dataset_images.exists():
             shutil.rmtree(dataset_images)
-        shutil.copytree(source_images, dataset_images)
+        dataset_images.mkdir(parents=True, exist_ok=True)
+        image_extensions = {".jpg", ".jpeg", ".png", ".webp", ".tif", ".tiff"}
+        copied = 0
+        for path in sorted(source_images.rglob("*")):
+            if not path.is_file() or path.suffix.lower() not in image_extensions:
+                continue
+            destination = dataset_images / path.name
+            if destination.exists():
+                destination = dataset_images / f"{path.stem}_{copied:06d}{path.suffix.lower()}"
+            shutil.copy2(path, destination)
+            copied += 1
+        if copied == 0:
+            raise RuntimeError(f"No selected images found for COLMAP in {source_images}")
+        if on_log:
+            on_log(f"Copied {copied} selected frames into COLMAP image directory")
 
     preset = _colmap_quality()
 

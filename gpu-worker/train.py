@@ -1,6 +1,7 @@
 """Training orchestration — coordinates the full reconstruction pipeline."""
 
 import logging
+import shutil
 import time
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -91,17 +92,20 @@ def run_full_pipeline(
     Run the full reconstruction pipeline using COLMAP + gsplat.
 
     Pipeline order:
-      1. run_colmap()
-      2. train_gsplat()
-      3. generate_collision_mesh()
-      4. convert_to_splat()
-      5. upload_results()
+      1. Download MP4 from signed R2 URL
+      2. CPU frame selection
+      3. run_colmap() on selected frames only
+      4. train_gsplat()
+      5. generate_collision_mesh()
+      6. convert_to_splat()
+      7. upload_results()
     """
-    work_dir, source_archives = _download_source_archives(job_id, source_files)
-    output_dir = work_dir / "output"
-    output_dir.mkdir(parents=True, exist_ok=True)
+    _last_progress: dict[str, int] = {"value": 5}
 
     def on_log(message: str) -> None:
+        on_status(STAGE_FRAME_SELECTION, message, _last_progress["value"])
+
+    def on_colmap_log(message: str) -> None:
         on_status(STAGE_COLMAP, message, _last_progress["value"])
 
     def on_colmap_progress(_substage: str, progress: int, message: str) -> None:
@@ -112,23 +116,52 @@ def run_full_pipeline(
         _last_progress["value"] = progress
         on_status(STAGE_GSPLAT, message, progress)
 
-    _last_progress: dict[str, int] = {"value": 5}
-
     on_status(STAGE_QUEUED, "Job accepted — starting video frame selection", 5)
+    on_status(STAGE_FRAME_SELECTION, "Downloading source video from object storage", 6)
+
+    work_dir, source_archives = _download_source_archives(job_id, source_files, on_log=on_log)
+    output_dir = work_dir / "output"
+    output_dir.mkdir(parents=True, exist_ok=True)
 
     video_path = source_archives[0]
     if not video_path.exists():
         raise RuntimeError(f"Video input is missing: {video_path}")
 
-    selected_frames = extract_frames_from_video(video_path, work_dir, on_log=on_log)
-    on_status(STAGE_FRAME_SELECTION, f"Selected {len(list(selected_frames.glob('*.jpg')))} ordered frames for reconstruction", 18)
+    def on_selection_log(message: str) -> None:
+        if message.startswith("[frame_selection:") and "%" in message:
+            try:
+                pct = int(message.split(":", 1)[1].split("%", 1)[0])
+                _last_progress["value"] = 6 + int(pct * 12 / 100)
+            except ValueError:
+                pass
+        on_status(STAGE_FRAME_SELECTION, message, _last_progress["value"])
+
+    selected_frames = extract_frames_from_video(
+        video_path,
+        work_dir,
+        on_log=on_selection_log,
+        job_id=job_id,
+    )
+    selected_count = len(list(selected_frames.glob("*.jpg")))
+    if selected_count == 0:
+        raise RuntimeError("Frame selection completed without any COLMAP input images")
+    on_status(
+        STAGE_FRAME_SELECTION,
+        f"Selected {selected_count} ordered frames for reconstruction",
+        18,
+    )
+
+    for archive in source_archives:
+        archive.unlink(missing_ok=True)
 
     colmap_dir = run_colmap(
         selected_frames,
         work_dir / "colmap",
-        on_log=on_log,
+        on_log=on_colmap_log,
         on_progress=on_colmap_progress,
     )
+
+    shutil.rmtree(work_dir / "frame_selection", ignore_errors=True)
 
     on_status(STAGE_GSPLAT, "COLMAP complete — starting gsplat training", 32)
     model_path = train_gsplat(

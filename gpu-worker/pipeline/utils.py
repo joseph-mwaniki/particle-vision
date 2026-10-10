@@ -8,11 +8,14 @@ import subprocess
 import zipfile
 from pathlib import Path
 from pathlib import PurePosixPath
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
+
+from .frame_selection import SelectorConfig, select_frames
 
 logger = logging.getLogger(__name__)
 
 LogFn = Callable[[str], None]
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".tif", ".tiff"}
 
 
 def ensure_dir(path: Path) -> Path:
@@ -28,7 +31,7 @@ def extract_images_zip(zip_path: Path, dest_dir: Path, on_log: Optional[LogFn] =
 def extract_images_zips(zip_paths: list[Path], dest_dir: Path, on_log: Optional[LogFn] = None) -> Path:
     """Extract image files from source archives into isolated temporary folders."""
     images_dir = ensure_dir(dest_dir / "images")
-    image_extensions = {".jpg", ".jpeg", ".png", ".webp", ".tif", ".tiff"}
+    image_extensions = IMAGE_EXTENSIONS
     image_count = 0
     for index, zip_path in enumerate(zip_paths, start=1):
         namespace = re.sub(r"[^a-zA-Z0-9_-]+", "-", zip_path.stem).strip("-")[:80]
@@ -56,67 +59,84 @@ def extract_images_zips(zip_paths: list[Path], dest_dir: Path, on_log: Optional[
     return images_dir
 
 
+def _clear_dir(path: Path) -> None:
+    if not path.exists():
+        return
+    for item in sorted(path.iterdir(), reverse=True):
+        if item.is_file() or item.is_symlink():
+            item.unlink()
+        elif item.is_dir():
+            shutil.rmtree(item)
+
+
 def extract_frames_from_video(
     video_path: Path,
     dest_dir: Path,
     on_log: Optional[LogFn] = None,
-    fps: float = 1.0,
+    job_id: Optional[str] = None,
+    config: Optional[SelectorConfig] = None,
 ) -> Path:
-    """Extract a video into an ordered image sequence under dest_dir/frames/.
+    """Run CPU frame selection and return the COLMAP-ready selected-images directory.
 
-    This acts as an adapter around the frame-selection stage. If an external frame-
-    extractor implementation is available via FRAME_EXTRACTOR_PATH, it is invoked.
-    Otherwise this falls back to ffmpeg to produce a stable sequence of JPEG frames
-    suitable for COLMAP.
+    Only frames accepted by the selection algorithm are written for COLMAP. The
+    source video is not sampled at a fixed FPS and is never passed through as
+    an unfiltered image sequence.
     """
-    frames_dir = ensure_dir(dest_dir / "frames")
-    if frames_dir.exists():
-        for item in sorted(frames_dir.iterdir(), reverse=True):
-            if item.is_file() or item.is_symlink():
-                item.unlink()
-            elif item.is_dir():
-                shutil.rmtree(item)
+    if not video_path.is_file() or video_path.stat().st_size == 0:
+        raise RuntimeError(f"Source video is missing or empty: {video_path}")
 
-    external = Path(__import__("os").environ.get("FRAME_EXTRACTOR_PATH", "")).expanduser()
-    if external and external.is_file():
+    output_root = ensure_dir(dest_dir / "frame_selection")
+    colmap_images = output_root / "colmap_input" / "images"
+    _clear_dir(output_root)
+
+    selector_config = config or SelectorConfig(max_rejected_preview=0)
+
+    def progress_callback(progress: int, message: str, updates: dict[str, Any] | None = None) -> None:
         if on_log:
-            on_log(f"Using external frame extractor: {external}")
-        subprocess.run([str(external), str(video_path), str(frames_dir)], check=True)
-        image_files = sorted(frames_dir.glob("*"))
-        if not image_files:
-            raise RuntimeError("External frame extractor produced no output frames")
-        return frames_dir
-
-    ffmpeg = shutil.which("ffmpeg")
-    if not ffmpeg:
-        raise RuntimeError("ffmpeg is required to extract frames from video, and no external frame extractor is configured")
+            extra = ""
+            stats = (updates or {}).get("stats") if updates else None
+            if isinstance(stats, dict) and stats.get("selected_frames") is not None:
+                extra = f" (selected={stats['selected_frames']})"
+            on_log(f"[frame_selection:{progress}%] {message}{extra}")
 
     if on_log:
-        on_log(f"Extracting frames from {video_path.name} into {frames_dir}")
-    subprocess.run([
-        ffmpeg,
-        "-y",
-        "-i",
-        str(video_path),
-        "-vf",
-        f"fps={fps}",
-        "-q:v",
-        "2",
-        str(frames_dir / "%06d.jpg"),
-    ], check=True, capture_output=True, text=True)
+        on_log(f"Selecting reconstruction frames from {video_path.name} on CPU")
 
-    frame_files = sorted(frames_dir.glob("*.jpg"))
-    if not frame_files:
-        raise RuntimeError("No frames were extracted from the video input")
+    try:
+        result = select_frames(
+            video_path,
+            config=selector_config,
+            job_id=job_id,
+            progress_callback=progress_callback,
+            output_root=output_root,
+        )
+    except ValueError as exc:
+        raise RuntimeError(f"Video decoding failed: {exc}") from exc
+
+    selected_count = int(result.get("selected_count") or 0)
+    frame_files = sorted(p for p in colmap_images.glob("*.jpg") if p.is_file())
+    if selected_count <= 0 or not frame_files:
+        raise RuntimeError("Frame selection produced no usable frames for reconstruction")
+
+    for warning in result.get("warnings") or []:
+        if on_log:
+            on_log(f"[frame_selection] {warning}")
 
     metadata = {
         "source_video": video_path.name,
-        "frame_count": len(frame_files),
-        "fps": fps,
+        "job_id": result.get("job_id"),
+        "frame_count": selected_count,
+        "stats": result.get("stats", {}),
+        "warnings": result.get("warnings", []),
         "ordered_frames": [p.name for p in frame_files],
+        "algorithm": "frame-extractor-algorithm",
     }
-    (frames_dir / "frame_selection.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
-    return frames_dir
+    (output_root / "frame_selection.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+    if on_log:
+        on_log(
+            f"Frame selection kept {selected_count} of {result.get('stats', {}).get('total_frames', '?')} frames"
+        )
+    return colmap_images
 
 
 def run_command(
@@ -163,7 +183,7 @@ def download_file(url: str, dest_path: Path, on_log: Optional[LogFn] = None) -> 
     safe_url = urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, encoded_path, parsed.query, parsed.fragment))
 
     if on_log:
-        on_log(f"Downloading input archive from {safe_url}...")
+        on_log(f"Downloading source video from object storage...")
     logger.info("Downloading file from %s to %s", safe_url, dest_path)
 
     urllib.request.urlretrieve(safe_url, str(dest_path))
