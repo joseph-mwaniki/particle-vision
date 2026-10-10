@@ -1,1 +1,0 @@
-"""Frame selection processing utilities."""

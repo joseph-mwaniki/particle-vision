@@ -1,1 +1,0 @@
-"""Frame selection backend package."""
