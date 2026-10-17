@@ -33,8 +33,15 @@ async function formatJobResponse(job: Job) {
     assetUrl(job.voxelPath || null),
     assetUrl(job.voxelCollisionPath || null),
   ]);
-  return { ...job, splatUrl, collisionUrl, processedSplatUrl, voxelUrl, voxelCollisionUrl };
+  let frameStats = job.frameStats || null;
+  if (!frameStats && job.frameSelectionPath && job.frameSelectionPath.startsWith("{")) {
+    try {
+      frameStats = JSON.parse(job.frameSelectionPath);
+    } catch {}
+  }
+  return { ...job, frameStats, splatUrl, collisionUrl, processedSplatUrl, voxelUrl, voxelCollisionUrl };
 }
+
 
 export function createJobRouter(): Router {
   const router = Router();

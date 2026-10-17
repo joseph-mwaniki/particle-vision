@@ -2,13 +2,17 @@ from __future__ import annotations
 
 import csv
 import json
+import logging
+import os
 import shutil
 import threading
 import uuid
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 from typing import Any, Callable
 
 import cv2
+import numpy as np
 
 from .blur_detector import classify_blur, variance_of_laplacian
 from .config import SelectorConfig
@@ -16,8 +20,10 @@ from .coverage import find_large_gaps
 from .exposure_detector import analyze_exposure
 from .frame import FrameMetrics
 from .scoring import compute_frame_score
-from .similarity import compute_similarity
+from .similarity import compute_similarity, prepare_similarity_frame
 from .video_reader import get_video_metadata, iter_frames
+
+logger = logging.getLogger(__name__)
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 OUTPUT_DIR = ROOT / "output"
@@ -26,6 +32,39 @@ REJECTED_DIR = OUTPUT_DIR / "rejected_frames"
 COLMAP_DIR = OUTPUT_DIR / "colmap_input"
 COLMAP_IMAGES_DIR = COLMAP_DIR / "images"
 _EXPORT_LOCK = threading.Lock()
+
+
+def _process_frame_chunk(args: tuple[str, int, int]) -> list[dict[str, Any]]:
+    video_path_str, start_frame, count = args
+    cap = cv2.VideoCapture(video_path_str)
+    cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
+    fps = cap.get(cv2.CAP_PROP_FPS) or 1.0
+    results = []
+    for offset in range(count):
+        ret, frame = cap.read()
+        if not ret:
+            break
+        frame_index = start_frame + offset
+        timestamp = frame_index / fps
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        sharpness = variance_of_laplacian(gray)
+        brightness, dark_ratio, bright_ratio, exposure_label = analyze_exposure(frame)
+        thumbnail = prepare_similarity_frame(gray, (64, 64))
+
+        results.append({
+            "frame_index": frame_index,
+            "timestamp": timestamp,
+            "sharpness": sharpness,
+            "brightness": brightness,
+            "dark_ratio": dark_ratio,
+            "bright_ratio": bright_ratio,
+            "exposure_label": exposure_label,
+            "thumbnail": thumbnail,
+            "image": frame,
+        })
+    cap.release()
+    return results
+
 
 
 def evaluate_temporal_bridge(
@@ -113,23 +152,77 @@ def select_frames(
     exposure_rejected_count = 0
     redundant_rejections = 0
 
-    for frame_index, timestamp, frame in iter_frames(video_path, max_frames=max_frames):
+    # Multi-core parallel chunk extraction if video is long enough
+    num_cpus = os.cpu_count() or 1
+    analyzed_items: list[dict[str, Any]] = []
+    if max_frames >= 40 and num_cpus > 1:
+        workers = min(num_cpus, 16)
+        chunk_size = max(10, (max_frames + workers - 1) // workers)
+        chunks = [
+            (str(video_path), start_idx, min(chunk_size, max_frames - start_idx))
+            for start_idx in range(0, max_frames, chunk_size)
+        ]
+        try:
+            with ProcessPoolExecutor(max_workers=workers) as executor:
+                for batch in executor.map(_process_frame_chunk, chunks):
+                    analyzed_items.extend(batch)
+        except Exception as exc:
+            logger.warning("Parallel frame chunk extraction failed (%s), falling back to sequential", exc)
+            analyzed_items = []
+
+    if len(analyzed_items) < int(max_frames * 0.9):
+        analyzed_items = []
+        for frame_index, timestamp, frame in iter_frames(video_path, max_frames=max_frames):
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            sharpness = variance_of_laplacian(gray)
+            brightness, dark_ratio, bright_ratio, exposure_label = analyze_exposure(frame)
+            thumbnail = prepare_similarity_frame(gray, (64, 64))
+
+            analyzed_items.append({
+                "frame_index": frame_index,
+                "timestamp": float(timestamp),
+                "sharpness": float(sharpness),
+                "brightness": float(brightness),
+                "dark_ratio": float(dark_ratio),
+                "bright_ratio": float(bright_ratio),
+                "exposure_label": exposure_label,
+                "thumbnail": thumbnail,
+                "image": frame,
+            })
+
+    # Adaptive blur threshold: if video is compressed or has low high-frequency noise,
+    # scale threshold adaptively to prevent throwing away clear compressed frames.
+    valid_sharpness = [
+        item["sharpness"]
+        for item in analyzed_items
+        if item["exposure_label"] not in {"too_dark", "too_bright"}
+    ]
+    if valid_sharpness and getattr(cfg, "adaptive_blur", True):
+        median_sharpness = float(np.median(valid_sharpness))
+        if median_sharpness < cfg.blur_threshold:
+            effective_blur = max(getattr(cfg, "min_blur_threshold", 20.0), median_sharpness * 0.70)
+        else:
+            effective_blur = cfg.blur_threshold
+    else:
+        effective_blur = cfg.blur_threshold
+
+    for item in analyzed_items:
         processed_frames += 1
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        sharpness = variance_of_laplacian(gray)
-        brightness, dark_ratio, bright_ratio, exposure_label = analyze_exposure(frame)
-        quality_label = classify_blur(sharpness, cfg.blur_threshold)
+        sharpness = item["sharpness"]
+        quality_label = classify_blur(sharpness, effective_blur)
+        exposure_label = item["exposure_label"]
 
         candidate = FrameMetrics(
-            frame_index=frame_index,
-            timestamp=float(timestamp),
+            frame_index=item["frame_index"],
+            timestamp=float(item["timestamp"]),
             sharpness=float(sharpness),
-            brightness=float(brightness),
-            dark_ratio=float(dark_ratio),
-            bright_ratio=float(bright_ratio),
+            brightness=float(item["brightness"]),
+            dark_ratio=float(item["dark_ratio"]),
+            bright_ratio=float(item["bright_ratio"]),
             quality_label=quality_label,
             exposure_label=exposure_label,
-            image=frame.copy(),
+            image=item["image"],
+            thumbnail=item["thumbnail"],
             status="candidate",
         )
 
@@ -149,7 +242,7 @@ def select_frames(
             _progress_callback(
                 progress_callback,
                 progress,
-                f"Analyzing frame {processed_frames} of {max_frames}",
+                f"[frame_selection:analysis] Analyzing frame {processed_frames} of {max_frames}",
                 stats={
                     "analyzed_frames": processed_frames,
                     "blurry_frames": blurry_count,
@@ -161,7 +254,7 @@ def select_frames(
             )
             continue
 
-        candidate.sharpness_score = min(1.0, max(0.0, candidate.sharpness / max(cfg.blur_threshold * 1.5, 1.0)))
+        candidate.sharpness_score = min(1.0, max(0.0, candidate.sharpness / max(effective_blur * 1.5, 1.0)))
         candidate.exposure_score = 1.0
         candidate.viewpoint_change_score = 0.25
         candidate.final_score = compute_frame_score(candidate, cfg)
@@ -171,7 +264,7 @@ def select_frames(
         _progress_callback(
             progress_callback,
             progress,
-            f"Analyzing frame {processed_frames} of {max_frames}",
+            f"[frame_selection:analysis] Analyzing frame {processed_frames} of {max_frames}",
             stats={
                 "analyzed_frames": processed_frames,
                 "blurry_frames": blurry_count,
@@ -198,7 +291,7 @@ def select_frames(
         _progress_callback(
             progress_callback,
             progress,
-            f"Filtering frames {selection_processed} of {len(candidate_frames)}",
+            f"[frame_selection:filtering] Filtering frames {selection_processed} of {len(candidate_frames)}",
             stats={
                 "analyzed_frames": processed_frames,
                 "blurry_frames": blurry_count,
@@ -215,16 +308,24 @@ def select_frames(
         recent_selected: list[FrameMetrics] = []
 
         for index, candidate in enumerate(current_window):
-            previous_selected = recent_selected[-1] if recent_selected else None
+            previous_selected = (
+                selected_window[-1]
+                if selected_window
+                else (selected_frames[-1] if selected_frames else (recent_selected[-1] if recent_selected else None))
+            )
             next_candidates = current_window[index + 1 : index + 1 + cfg.lookahead_window]
             next_frame = next_candidates[0] if next_candidates else None
             next_similarity = 0.0
             if next_frame is not None:
-                next_similarity = compute_similarity(candidate.image, next_frame.image)
-            previous_similarity = 1.0 if previous_selected is None else compute_similarity(previous_selected.image, candidate.image)
+                next_similarity = compute_similarity(candidate.thumbnail, next_frame.thumbnail)
+            previous_similarity = (
+                1.0
+                if previous_selected is None
+                else compute_similarity(previous_selected.thumbnail, candidate.thumbnail)
+            )
             direct_overlap = 0.0
             if previous_selected is not None and next_frame is not None:
-                direct_overlap = compute_similarity(previous_selected.image, next_frame.image)
+                direct_overlap = compute_similarity(previous_selected.thumbnail, next_frame.thumbnail)
 
             candidate.similarity = float(previous_similarity)
             candidate.redundancy_score = max(0.0, 1.0 - previous_similarity)
@@ -294,7 +395,7 @@ def select_frames(
                 reverse=True,
             )
             for fallback in fallback_candidates:
-                if fallback.status != "rejected":
+                if fallback.exposure_label not in {"too_dark", "too_bright"}:
                     fallback.status = "selected"
                     fallback.selected = True
                     fallback.reason = "Minimum-frame protection"
@@ -330,18 +431,38 @@ def select_frames(
         _progress_callback(
             progress_callback,
             progress,
-            f"Checking coverage gaps {idx} of {len(selected_frames) - 1}",
+            f"[frame_selection:coverage] Checking coverage gaps {idx} of {len(selected_frames) - 1}",
             selected_count=len(selected_frames),
         )
 
     _progress_callback(
         progress_callback,
         77,
-        "Coverage validation complete",
+        "[frame_selection:coverage] Coverage validation complete",
         selected_count=len(selected_frames),
     )
 
     selected_frames = sorted({frame.frame_index: frame for frame in selected_frames}.values(), key=lambda item: item.timestamp)
+
+    # Safety net: ensure minimum frame count for COLMAP reconstruction
+    if len(selected_frames) < cfg.min_final_selection and candidate_frames:
+        target_count = min(cfg.min_final_selection, len(candidate_frames))
+        selected_indices = {f.frame_index for f in selected_frames}
+        usable = [
+            c for c in candidate_frames
+            if c.exposure_label not in {"too_dark", "too_bright"}
+        ] or candidate_frames
+        step = max(1, len(usable) // target_count)
+        for c in usable[::step]:
+            if c.frame_index not in selected_indices:
+                c.status = "selected"
+                c.selected = True
+                c.reason = "Uniform coverage safety net"
+                selected_frames.append(c)
+                selected_indices.add(c.frame_index)
+                if len(selected_frames) >= target_count:
+                    break
+        selected_frames = sorted(selected_frames, key=lambda item: item.timestamp)
 
     if len(selected_frames) < cfg.min_final_selection:
         warnings.append(
@@ -351,6 +472,7 @@ def select_frames(
         warnings.append(
             "Very little redundancy was removed. The input may contain substantial camera movement or weak similarity thresholds."
         )
+
 
     output_dir, selected_dir, rejected_dir, colmap_dir, colmap_images_dir = _resolve_output_dirs(output_root)
     prefix = export_id[:12]
@@ -389,7 +511,7 @@ def select_frames(
             _progress_callback(
                 progress_callback,
                 progress,
-                f"Saving selected frames {order} of {len(selected_frames)}",
+                f"[frame_selection:export] Saving selected frames {order} of {len(selected_frames)}",
                 selected_frames=selected_entries.copy(),
                 selected_count=len(selected_entries),
                 stats={
@@ -420,7 +542,7 @@ def select_frames(
             _progress_callback(
                 progress_callback,
                 progress,
-                f"Saving rejected previews {order} of {min(len(rejected_frames), cfg.max_rejected_preview)}",
+                f"[frame_selection:export] Saving rejected previews {order} of {min(len(rejected_frames), cfg.max_rejected_preview)}",
                 rejected_preview=rejected_preview.copy(),
             )
 
@@ -447,7 +569,7 @@ def select_frames(
             _progress_callback(
                 progress_callback,
                 progress,
-                f"Preparing COLMAP images {order} of {len(selected_entries)}",
+                f"[frame_selection:colmap_prep] Preparing COLMAP images {order} of {len(selected_entries)}",
             )
         (colmap_dir / "frames.json").write_text(json.dumps(export_payload, indent=2))
 
@@ -473,5 +595,6 @@ def select_frames(
         "rejected_preview": rejected_preview,
         "metadata": metadata,
     }
-    _progress_callback(progress_callback, 100, "Export complete")
+    _progress_callback(progress_callback, 100, f"[frame_selection:summary] Export complete: {len(selected_entries)} frames ready for COLMAP")
+
     return result

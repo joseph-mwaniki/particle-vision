@@ -4,7 +4,7 @@ import numpy as np
 
 
 def analyze_exposure(frame: np.ndarray) -> tuple[float, float, float, str]:
-    gray = frame.mean(axis=2)
+    gray = frame.mean(axis=2) if frame.ndim == 3 else frame
     brightness = float(gray.mean())
     dark_ratio = float(np.mean(gray < 30))
     bright_ratio = float(np.mean(gray > 245))
@@ -17,3 +17,5 @@ def analyze_exposure(frame: np.ndarray) -> tuple[float, float, float, str]:
         label = "good"
 
     return brightness, dark_ratio, bright_ratio, label
+
+

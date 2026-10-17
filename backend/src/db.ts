@@ -116,18 +116,29 @@ export async function updateJob(
 
   if (prisma && isPrismaAvailable) {
     try {
+      const prismaData: any = {
+        ...data,
+        updatedAt: now,
+      };
+      if (data.frameStats && prisma.job) {
+        // If Prisma schema lacks frameStats column, persist JSON in frameSelectionPath
+        prismaData.frameSelectionPath = JSON.stringify(data.frameStats);
+        delete prismaData.frameStats;
+      }
       const updated = await prisma.job.update({
         where: { id },
-        data: {
-          ...data,
-          updatedAt: now,
-        },
+        data: prismaData,
       });
-      return updated as unknown as Job;
+      const res = updated as unknown as Job;
+      if (data.frameStats) {
+        res.frameStats = data.frameStats;
+      }
+      return res;
     } catch (err) {
       handlePrismaError(err, "updateJob");
     }
   }
+
 
   const jobs = readJsonFile<Job>(JSON_DB_PATH);
   const index = jobs.findIndex((j) => j.id === id);

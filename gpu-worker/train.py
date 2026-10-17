@@ -145,14 +145,41 @@ def run_full_pipeline(
     selected_count = len(list(selected_frames.glob("*.jpg")))
     if selected_count == 0:
         raise RuntimeError("Frame selection completed without any COLMAP input images")
+    meta_path = work_dir / "frame_selection" / "frame_selection.json"
+    stats: dict[str, Any] = {}
+    if meta_path.is_file():
+        try:
+            import json
+            stats = json.loads(meta_path.read_text(encoding="utf-8")).get("stats", {})
+        except Exception:
+            pass
+
+    frame_stats = {
+        "total": int(stats.get("total_frames") or selected_count),
+        "used": selected_count,
+        "blurred": int(stats.get("blurry_frames") or 0),
+        "redundant": int(stats.get("redundant_frames") or 0),
+        "exposure_rejected": int(stats.get("exposure_rejected") or 0),
+    }
+
     on_status(
         STAGE_FRAME_SELECTION,
-        f"Selected {selected_count} ordered frames for reconstruction",
+        f"[frame_selection:summary] Frame selection complete: {selected_count} used, "
+        f"{frame_stats['blurred']} blurred, {frame_stats['redundant']} redundant "
+        f"(total: {frame_stats['total']} frames)",
         18,
+        frame_stats=frame_stats,
     )
+
 
     for archive in source_archives:
         archive.unlink(missing_ok=True)
+
+    on_status(
+        STAGE_COLMAP,
+        f"[COLMAP:init] Selected {selected_count} ordered frames — beginning feature extraction",
+        19,
+    )
 
     colmap_dir = run_colmap(
         selected_frames,
@@ -160,6 +187,7 @@ def run_full_pipeline(
         on_log=on_colmap_log,
         on_progress=on_colmap_progress,
     )
+
 
     shutil.rmtree(work_dir / "frame_selection", ignore_errors=True)
 

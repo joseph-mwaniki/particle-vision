@@ -28,6 +28,8 @@ class SelectorConfig:
     frame_resize_height: int = 180
     max_analysis_frames: int | None = None
     min_final_selection: int = 8
+    adaptive_blur: bool = True
+    min_blur_threshold: float = 20.0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -52,7 +54,10 @@ class SelectorConfig:
             "frame_resize_height": self.frame_resize_height,
             "max_analysis_frames": self.max_analysis_frames,
             "min_final_selection": self.min_final_selection,
+            "adaptive_blur": self.adaptive_blur,
+            "min_blur_threshold": self.min_blur_threshold,
         }
+
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "SelectorConfig":

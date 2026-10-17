@@ -1,7 +1,10 @@
 import { appendJobLog, getJob, prisma, updateJob } from "../db";
 import { headObject, presignDownload, presignObjectUpload } from "./objectStorage";
 import { dispatchTrainingJob } from "./workerClient";
-import { WorkerCallbackPayload } from "../types/job";
+import { Job, WorkerCallbackPayload } from "../types/job";
+
+
+
 
 const BACKEND_PUBLIC_URL = process.env.BACKEND_PUBLIC_URL || "http://localhost:3001";
 
@@ -112,8 +115,13 @@ export async function handleWorkerCallback(
     return;
   }
 
-  await updateJob(payload.job_id, {
+  const updatePayload: Partial<Job> = {
     status: payload.status,
     progress: payload.progress,
-  });
+  };
+  if (payload.frame_stats) {
+    updatePayload.frameStats = payload.frame_stats;
+  }
+  await updateJob(payload.job_id, updatePayload);
 }
+

@@ -9,6 +9,14 @@ export type JobStatus =
   | "COMPLETED"
   | "FAILED";
 
+export interface FrameStats {
+  total: number;
+  used: number;
+  blurred: number;
+  redundant: number;
+  exposure_rejected?: number;
+}
+
 export interface Job {
   id: string;
   status: JobStatus;
@@ -25,6 +33,7 @@ export interface Job {
   voxelCollisionPath?: string | null;
   logs: string | null;
   uploadSessionId?: string | null;
+  frameStats?: FrameStats | null;
 }
 
 export interface WorkerRunRequest {
@@ -51,4 +60,6 @@ export interface WorkerCallbackPayload {
   splat_key?: string;
   collision_key?: string;
   error?: string;
+  frame_stats?: FrameStats;
 }
+

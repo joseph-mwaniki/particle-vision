@@ -64,7 +64,10 @@ def process_job(
             payload["collision_key"] = kwargs["collision_key"]
         if kwargs.get("error"):
             payload["error"] = kwargs["error"]
+        if kwargs.get("frame_stats"):
+            payload["frame_stats"] = kwargs["frame_stats"]
         send_callback(callback_url, payload)
+
 
     try:
         if not USE_MOCK:

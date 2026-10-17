@@ -25,7 +25,9 @@ class FrameMetrics:
     selected: bool = False
     in_window: int = 0
     image: Any = None
+    thumbnail: Any = None
     metadata: dict[str, Any] = field(default_factory=dict)
+
 
     def to_dict(self) -> dict[str, Any]:
         return {
