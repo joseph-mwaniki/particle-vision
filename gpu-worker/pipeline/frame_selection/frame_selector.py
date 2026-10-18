@@ -35,6 +35,14 @@ _EXPORT_LOCK = threading.Lock()
 
 
 def _process_frame_chunk(args: tuple[str, int, int]) -> list[dict[str, Any]]:
+    """
+    Process a chunk of frames from the video file.
+
+    FIX: thumbnails and images are serialised as raw bytes so they survive
+    pickling across ProcessPoolExecutor worker processes.  Previously the
+    numpy arrays were returned directly, which caused silent pickling failures
+    that forced fallback to sequential mode (leaving all CPU cores idle).
+    """
     video_path_str, start_frame, count = args
     cap = cv2.VideoCapture(video_path_str)
     cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
@@ -49,22 +57,46 @@ def _process_frame_chunk(args: tuple[str, int, int]) -> list[dict[str, Any]]:
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         sharpness = variance_of_laplacian(gray)
         brightness, dark_ratio, bright_ratio, exposure_label = analyze_exposure(frame)
-        thumbnail = prepare_similarity_frame(gray, (64, 64))
+        thumbnail_arr = prepare_similarity_frame(gray, (64, 64))
 
         results.append({
             "frame_index": frame_index,
             "timestamp": timestamp,
-            "sharpness": sharpness,
-            "brightness": brightness,
-            "dark_ratio": dark_ratio,
-            "bright_ratio": bright_ratio,
+            "sharpness": float(sharpness),
+            "brightness": float(brightness),
+            "dark_ratio": float(dark_ratio),
+            "bright_ratio": float(bright_ratio),
             "exposure_label": exposure_label,
-            "thumbnail": thumbnail,
-            "image": frame,
+            # Serialise as bytes so they cross process boundaries safely
+            "thumbnail_bytes": thumbnail_arr.tobytes(),
+            "thumbnail_shape": thumbnail_arr.shape,
+            "thumbnail_dtype": str(thumbnail_arr.dtype),
+            "image_bytes": frame.tobytes(),
+            "image_shape": frame.shape,
+            "image_dtype": str(frame.dtype),
         })
     cap.release()
     return results
 
+
+def _reconstruct_parallel_items(raw_items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Rebuild numpy arrays from byte payloads returned by worker processes."""
+    items = []
+    for raw in raw_items:
+        thumbnail = np.frombuffer(raw["thumbnail_bytes"], dtype=raw["thumbnail_dtype"]).reshape(raw["thumbnail_shape"])
+        image = np.frombuffer(raw["image_bytes"], dtype=raw["image_dtype"]).reshape(raw["image_shape"]).copy()
+        items.append({
+            "frame_index": raw["frame_index"],
+            "timestamp": raw["timestamp"],
+            "sharpness": raw["sharpness"],
+            "brightness": raw["brightness"],
+            "dark_ratio": raw["dark_ratio"],
+            "bright_ratio": raw["bright_ratio"],
+            "exposure_label": raw["exposure_label"],
+            "thumbnail": thumbnail,
+            "image": image,
+        })
+    return items
 
 
 def evaluate_temporal_bridge(
@@ -152,9 +184,15 @@ def select_frames(
     exposure_rejected_count = 0
     redundant_rejections = 0
 
-    # Multi-core parallel chunk extraction if video is long enough
+    # ------------------------------------------------------------------ #
+    # STAGE 1: Multi-core parallel frame extraction                       #
+    # FIX: thumbnails/images now travel as bytes — fully picklable,       #
+    # so workers actually execute in parallel instead of silently failing. #
+    # ------------------------------------------------------------------ #
     num_cpus = os.cpu_count() or 1
     analyzed_items: list[dict[str, Any]] = []
+    parallel_ok = False
+
     if max_frames >= 40 and num_cpus > 1:
         workers = min(num_cpus, 16)
         chunk_size = max(10, (max_frames + workers - 1) // workers)
@@ -162,22 +200,52 @@ def select_frames(
             (str(video_path), start_idx, min(chunk_size, max_frames - start_idx))
             for start_idx in range(0, max_frames, chunk_size)
         ]
+        logger.info(
+            "[frame_selection:extraction] Launching parallel extraction — %d workers, %d chunks, %d frames",
+            workers, len(chunks), max_frames,
+        )
+        _progress_callback(
+            progress_callback, 1,
+            f"[frame_selection:extraction] Starting parallel extraction with {workers} CPU workers ({len(chunks)} chunks)",
+        )
         try:
+            raw_batches: list[list[dict[str, Any]]] = []
             with ProcessPoolExecutor(max_workers=workers) as executor:
                 for batch in executor.map(_process_frame_chunk, chunks):
-                    analyzed_items.extend(batch)
+                    raw_batches.append(batch)
+            for batch in raw_batches:
+                analyzed_items.extend(_reconstruct_parallel_items(batch))
+            parallel_ok = len(analyzed_items) >= int(max_frames * 0.9)
+            if parallel_ok:
+                logger.info(
+                    "[frame_selection:extraction] Parallel extraction complete — %d frames across %d workers",
+                    len(analyzed_items), workers,
+                )
+            else:
+                logger.warning(
+                    "[frame_selection:extraction] Parallel extraction returned only %d/%d frames — retrying sequentially",
+                    len(analyzed_items), max_frames,
+                )
+                analyzed_items = []
         except Exception as exc:
-            logger.warning("Parallel frame chunk extraction failed (%s), falling back to sequential", exc)
+            logger.warning(
+                "[frame_selection:extraction] Parallel extraction failed (%s) — falling back to sequential",
+                exc,
+            )
             analyzed_items = []
 
-    if len(analyzed_items) < int(max_frames * 0.9):
+    if not parallel_ok:
         analyzed_items = []
+        logger.info("[frame_selection:extraction] Sequential extraction — %d frames", max_frames)
+        _progress_callback(
+            progress_callback, 1,
+            f"[frame_selection:extraction] Sequential extraction — {max_frames} frames on 1 worker",
+        )
         for frame_index, timestamp, frame in iter_frames(video_path, max_frames=max_frames):
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
             sharpness = variance_of_laplacian(gray)
             brightness, dark_ratio, bright_ratio, exposure_label = analyze_exposure(frame)
             thumbnail = prepare_similarity_frame(gray, (64, 64))
-
             analyzed_items.append({
                 "frame_index": frame_index,
                 "timestamp": float(timestamp),
@@ -190,8 +258,17 @@ def select_frames(
                 "image": frame,
             })
 
-    # Adaptive blur threshold: if video is compressed or has low high-frequency noise,
-    # scale threshold adaptively to prevent throwing away clear compressed frames.
+    # Ensure temporal order regardless of chunk ordering
+    analyzed_items.sort(key=lambda item: item["frame_index"])
+
+    _progress_callback(
+        progress_callback, 10,
+        f"[frame_selection:extraction] Extracted {len(analyzed_items)} raw frames — starting quality analysis",
+    )
+
+    # ------------------------------------------------------------------ #
+    # STAGE 2: Adaptive blur threshold calibration                        #
+    # ------------------------------------------------------------------ #
     valid_sharpness = [
         item["sharpness"]
         for item in analyzed_items
@@ -199,12 +276,33 @@ def select_frames(
     ]
     if valid_sharpness and getattr(cfg, "adaptive_blur", True):
         median_sharpness = float(np.median(valid_sharpness))
-        if median_sharpness < cfg.blur_threshold:
-            effective_blur = max(getattr(cfg, "min_blur_threshold", 20.0), median_sharpness * 0.70)
-        else:
-            effective_blur = cfg.blur_threshold
+        effective_blur = (
+            max(getattr(cfg, "min_blur_threshold", 20.0), median_sharpness * 0.70)
+            if median_sharpness < cfg.blur_threshold
+            else cfg.blur_threshold
+        )
     else:
+        median_sharpness = 0.0
         effective_blur = cfg.blur_threshold
+
+    logger.info(
+        "[frame_selection:blur_calibration] Effective blur threshold=%.2f (config=%.2f, median=%.2f)",
+        effective_blur, cfg.blur_threshold, median_sharpness,
+    )
+    _progress_callback(
+        progress_callback, 12,
+        f"[frame_selection:blur_calibration] Blur threshold calibrated to {effective_blur:.1f} "
+        f"(video median sharpness={median_sharpness:.1f})",
+    )
+
+    # ------------------------------------------------------------------ #
+    # STAGE 3: Per-frame quality classification                           #
+    # ------------------------------------------------------------------ #
+    logger.info("[frame_selection:quality] Classifying %d frames for blur/exposure", len(analyzed_items))
+    _progress_callback(
+        progress_callback, 13,
+        f"[frame_selection:quality] Classifying {len(analyzed_items)} frames — blur threshold={effective_blur:.1f}",
+    )
 
     for item in analyzed_items:
         processed_frames += 1
@@ -228,7 +326,7 @@ def select_frames(
 
         if quality_label == "blurry":
             blurry_count += 1
-            candidate.status = "candidate"
+            candidate.status = "candidate"  # still a candidate — bridge logic decides
             candidate.reason = "BLUR"
             candidate.selected = False
 
@@ -238,11 +336,11 @@ def select_frames(
             candidate.selected = False
             rejected_frames.append(candidate)
             exposure_rejected_count += 1
-            progress = 1 + int(49 * processed_frames / max(max_frames, 1))
+            progress = 13 + int(37 * processed_frames / max(len(analyzed_items), 1))
             _progress_callback(
-                progress_callback,
-                progress,
-                f"[frame_selection:analysis] Analyzing frame {processed_frames} of {max_frames}",
+                progress_callback, progress,
+                f"[frame_selection:quality] Frame {processed_frames}/{len(analyzed_items)} "
+                f"— EXPOSURE REJECTED ({exposure_label})",
                 stats={
                     "analyzed_frames": processed_frames,
                     "blurry_frames": blurry_count,
@@ -260,11 +358,11 @@ def select_frames(
         candidate.final_score = compute_frame_score(candidate, cfg)
         candidate_frames.append(candidate)
 
-        progress = 1 + int(49 * processed_frames / max(max_frames, 1))
+        progress = 13 + int(37 * processed_frames / max(len(analyzed_items), 1))
         _progress_callback(
-            progress_callback,
-            progress,
-            f"[frame_selection:analysis] Analyzing frame {processed_frames} of {max_frames}",
+            progress_callback, progress,
+            f"[frame_selection:quality] Frame {processed_frames}/{len(analyzed_items)} "
+            f"— {quality_label.upper()} sharpness={sharpness:.1f}",
             stats={
                 "analyzed_frames": processed_frames,
                 "blurry_frames": blurry_count,
@@ -275,6 +373,26 @@ def select_frames(
             selected_count=0,
         )
 
+    logger.info(
+        "[frame_selection:quality] Quality pass complete — %d candidates, %d blurry, %d exposure-rejected",
+        len(candidate_frames), blurry_count, exposure_rejected_count,
+    )
+    _progress_callback(
+        progress_callback, 50,
+        f"[frame_selection:quality] Quality pass complete — {len(candidate_frames)} candidates "
+        f"| blurry={blurry_count} | exposure_rejected={exposure_rejected_count}",
+        stats={
+            "analyzed_frames": processed_frames,
+            "blurry_frames": blurry_count,
+            "exposure_rejected": exposure_rejected_count,
+            "redundant_frames": redundant_rejections,
+            "selected_frames": 0,
+        },
+    )
+
+    # ------------------------------------------------------------------ #
+    # STAGE 4: Windowed similarity filtering                              #
+    # ------------------------------------------------------------------ #
     windowed_candidates: dict[int, list[FrameMetrics]] = {}
     for candidate in candidate_frames:
         window_id = int(candidate.timestamp // cfg.window_seconds)
@@ -284,14 +402,24 @@ def select_frames(
     selection_processed = 0
     selection_total = max(len(candidate_frames), 1)
 
-    def report_selection_progress(selected_count: int) -> None:
+    logger.info(
+        "[frame_selection:similarity] Starting similarity filtering — %d candidates across %d windows",
+        len(candidate_frames), len(windowed_candidates),
+    )
+    _progress_callback(
+        progress_callback, 51,
+        f"[frame_selection:similarity] Filtering {len(candidate_frames)} candidates "
+        f"across {len(windowed_candidates)} time windows",
+    )
+
+    def report_selection_progress(selected_count: int, reason: str = "") -> None:
         nonlocal selection_processed
         selection_processed += 1
-        progress = 50 + int(25 * selection_processed / selection_total)
+        progress = 51 + int(24 * selection_processed / selection_total)
+        label = f" — {reason}" if reason else ""
         _progress_callback(
-            progress_callback,
-            progress,
-            f"[frame_selection:filtering] Filtering frames {selection_processed} of {len(candidate_frames)}",
+            progress_callback, progress,
+            f"[frame_selection:similarity] Frame {selection_processed}/{len(candidate_frames)}{label}",
             stats={
                 "analyzed_frames": processed_frames,
                 "blurry_frames": blurry_count,
@@ -315,14 +443,21 @@ def select_frames(
             )
             next_candidates = current_window[index + 1 : index + 1 + cfg.lookahead_window]
             next_frame = next_candidates[0] if next_candidates else None
+
             next_similarity = 0.0
             if next_frame is not None:
                 next_similarity = compute_similarity(candidate.thumbnail, next_frame.thumbnail)
-            previous_similarity = (
-                1.0
-                if previous_selected is None
-                else compute_similarity(previous_selected.thumbnail, candidate.thumbnail)
-            )
+
+            # FIX: When there is no previous frame (first frame of the video),
+            # previous_similarity was hardcoded to 1.0, which caused
+            # evaluate_temporal_bridge to classify the first frame as REDUNDANT
+            # and reject it — leading to selected=0 for the entire run.
+            # The correct value is 0.0 (no overlap with a non-existent frame).
+            if previous_selected is None:
+                previous_similarity = 0.0
+            else:
+                previous_similarity = compute_similarity(previous_selected.thumbnail, candidate.thumbnail)
+
             direct_overlap = 0.0
             if previous_selected is not None and next_frame is not None:
                 direct_overlap = compute_similarity(previous_selected.thumbnail, next_frame.thumbnail)
@@ -340,13 +475,14 @@ def select_frames(
 
             candidate.reason = reason
             candidate.status = status.lower()
+
             if status == "REDUNDANT":
                 candidate.status = "rejected"
                 candidate.selected = False
                 candidate.redundancy_score = 1.0 - previous_similarity
                 rejected_frames.append(candidate)
                 redundant_rejections += 1
-                report_selection_progress(len(selected_frames) + len(selected_window))
+                report_selection_progress(len(selected_frames) + len(selected_window), "REDUNDANT")
                 continue
 
             if status in {"BLURRY", "BLURRY_BRIDGE"}:
@@ -357,24 +493,20 @@ def select_frames(
                     candidate.viewpoint_change_score = max(0.6, 1.0 - direct_overlap)
                     selected_window.append(candidate)
                     recent_selected.append(candidate)
-                    report_selection_progress(len(selected_frames) + len(selected_window))
+                    report_selection_progress(len(selected_frames) + len(selected_window), "BLURRY_BRIDGE")
                     continue
                 candidate.status = "rejected"
                 candidate.selected = False
                 candidate.reason = "BLURRY"
                 rejected_frames.append(candidate)
                 blurry_count += 1
-                report_selection_progress(len(selected_frames) + len(selected_window))
+                report_selection_progress(len(selected_frames) + len(selected_window), "BLURRY")
                 continue
 
-            if previous_selected is not None and previous_similarity >= cfg.similarity_threshold and next_similarity >= cfg.similarity_threshold:
-                candidate.status = "rejected"
-                candidate.selected = False
-                candidate.reason = "REDUNDANT"
-                rejected_frames.append(candidate)
-                redundant_rejections += 1
-                report_selection_progress(len(selected_frames) + len(selected_window))
-                continue
+            # NOTE: The duplicate REDUNDANT guard that existed here (checking
+            # previous_similarity >= threshold a second time) has been removed.
+            # evaluate_temporal_bridge already handles this correctly and the
+            # duplicate was causing valid frames to be rejected twice.
 
             candidate.viewpoint_change_score = max(0.4, 1.0 - previous_similarity)
             candidate.final_score = compute_frame_score(candidate, cfg)
@@ -386,8 +518,9 @@ def select_frames(
 
             if len(recent_selected) > cfg.max_frames_per_window:
                 recent_selected = recent_selected[-cfg.max_frames_per_window:]
-            report_selection_progress(len(selected_frames) + len(selected_window))
+            report_selection_progress(len(selected_frames) + len(selected_window), status)
 
+        # Minimum-frame fallback per window
         if len(selected_window) < cfg.min_frames_per_window:
             fallback_candidates = sorted(
                 [c for c in current_window if c not in selected_window],
@@ -405,12 +538,43 @@ def select_frames(
 
         selected_frames.extend(selected_window)
 
-    selected_frames = sorted({frame.frame_index: frame for frame in selected_frames}.values(), key=lambda item: item.timestamp)
+    selected_frames = sorted(
+        {frame.frame_index: frame for frame in selected_frames}.values(),
+        key=lambda item: item.timestamp,
+    )
 
+    logger.info(
+        "[frame_selection:similarity] Similarity pass complete — %d selected, %d redundant rejections",
+        len(selected_frames), redundant_rejections,
+    )
+    _progress_callback(
+        progress_callback, 75,
+        f"[frame_selection:similarity] Similarity pass complete — {len(selected_frames)} frames selected "
+        f"| {redundant_rejections} redundant rejected",
+        stats={
+            "analyzed_frames": processed_frames,
+            "blurry_frames": blurry_count,
+            "exposure_rejected": exposure_rejected_count,
+            "redundant_frames": redundant_rejections,
+            "selected_frames": len(selected_frames),
+        },
+        selected_count=len(selected_frames),
+    )
+
+    # ------------------------------------------------------------------ #
+    # STAGE 5: Coverage gap filling                                       #
+    # ------------------------------------------------------------------ #
     warnings: list[str] = []
     warnings.extend(find_large_gaps(selected_frames, cfg.coverage_gap_seconds))
 
     coverage_total = max(len(selected_frames) - 1, 1)
+    gaps_filled = 0
+    logger.info("[frame_selection:coverage] Scanning for coverage gaps (threshold=%.1fs)", cfg.coverage_gap_seconds)
+    _progress_callback(
+        progress_callback, 76,
+        f"[frame_selection:coverage] Scanning {len(selected_frames) - 1} intervals for coverage gaps",
+    )
+
     for idx in range(1, len(selected_frames)):
         prev = selected_frames[idx - 1]
         curr = selected_frames[idx]
@@ -427,25 +591,42 @@ def select_frames(
                 filler.selected = True
                 filler.reason = "Coverage pass"
                 selected_frames.insert(idx, filler)
-        progress = 75 + int(2 * idx / coverage_total)
+                gaps_filled += 1
+        progress = 76 + int(2 * idx / coverage_total)
         _progress_callback(
-            progress_callback,
-            progress,
-            f"[frame_selection:coverage] Checking coverage gaps {idx} of {len(selected_frames) - 1}",
+            progress_callback, progress,
+            f"[frame_selection:coverage] Gap check {idx}/{len(selected_frames) - 1}",
             selected_count=len(selected_frames),
         )
 
+    logger.info(
+        "[frame_selection:coverage] Coverage pass complete — %d gaps filled, %d frames total",
+        gaps_filled, len(selected_frames),
+    )
     _progress_callback(
-        progress_callback,
-        77,
-        "[frame_selection:coverage] Coverage validation complete",
+        progress_callback, 78,
+        f"[frame_selection:coverage] Coverage pass complete — {gaps_filled} gaps filled, {len(selected_frames)} total",
         selected_count=len(selected_frames),
     )
 
-    selected_frames = sorted({frame.frame_index: frame for frame in selected_frames}.values(), key=lambda item: item.timestamp)
+    selected_frames = sorted(
+        {frame.frame_index: frame for frame in selected_frames}.values(),
+        key=lambda item: item.timestamp,
+    )
 
-    # Safety net: ensure minimum frame count for COLMAP reconstruction
+    # ------------------------------------------------------------------ #
+    # STAGE 6: Safety net — guarantee COLMAP minimum frame count         #
+    # ------------------------------------------------------------------ #
     if len(selected_frames) < cfg.min_final_selection and candidate_frames:
+        logger.warning(
+            "[frame_selection:safety_net] Only %d frames selected (minimum=%d) — applying uniform coverage safety net",
+            len(selected_frames), cfg.min_final_selection,
+        )
+        _progress_callback(
+            progress_callback, 79,
+            f"[frame_selection:safety_net] Too few frames ({len(selected_frames)}) "
+            f"— applying safety net to reach {cfg.min_final_selection}",
+        )
         target_count = min(cfg.min_final_selection, len(candidate_frames))
         selected_indices = {f.frame_index for f in selected_frames}
         usable = [
@@ -463,6 +644,7 @@ def select_frames(
                 if len(selected_frames) >= target_count:
                     break
         selected_frames = sorted(selected_frames, key=lambda item: item.timestamp)
+        logger.info("[frame_selection:safety_net] Safety net applied — %d frames selected", len(selected_frames))
 
     if len(selected_frames) < cfg.min_final_selection:
         warnings.append(
@@ -473,7 +655,9 @@ def select_frames(
             "Very little redundancy was removed. The input may contain substantial camera movement or weak similarity thresholds."
         )
 
-
+    # ------------------------------------------------------------------ #
+    # STAGE 7: Export — write to disk and prepare COLMAP images          #
+    # ------------------------------------------------------------------ #
     output_dir, selected_dir, rejected_dir, colmap_dir, colmap_images_dir = _resolve_output_dirs(output_root)
     prefix = export_id[:12]
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -487,6 +671,17 @@ def select_frames(
         "fps": metadata["fps"],
         "duration": round(metadata["duration"], 3),
     }
+
+    logger.info(
+        "[frame_selection:export] Writing %d selected + %d rejected previews to disk",
+        len(selected_frames), min(len(rejected_frames), cfg.max_rejected_preview),
+    )
+    _progress_callback(
+        progress_callback, 80,
+        f"[frame_selection:export] Writing {len(selected_frames)} selected frames to disk",
+        selected_count=len(selected_frames),
+    )
+
     with _EXPORT_LOCK:
         for folder in (selected_dir, rejected_dir, colmap_images_dir):
             for old_image in folder.glob(f"{prefix}_*.jpg"):
@@ -507,11 +702,10 @@ def select_frames(
                     "reason": frame.reason,
                 }
             )
-            progress = 78 + int(12 * order / max(len(selected_frames), 1))
+            progress = 80 + int(10 * order / max(len(selected_frames), 1))
             _progress_callback(
-                progress_callback,
-                progress,
-                f"[frame_selection:export] Saving selected frames {order} of {len(selected_frames)}",
+                progress_callback, progress,
+                f"[frame_selection:export] Saving selected frame {order}/{len(selected_frames)} — {frame.reason}",
                 selected_frames=selected_entries.copy(),
                 selected_count=len(selected_entries),
                 stats={
@@ -540,9 +734,8 @@ def select_frames(
             )
             progress = 90 + int(7 * order / max(min(len(rejected_frames), cfg.max_rejected_preview), 1))
             _progress_callback(
-                progress_callback,
-                progress,
-                f"[frame_selection:export] Saving rejected previews {order} of {min(len(rejected_frames), cfg.max_rejected_preview)}",
+                progress_callback, progress,
+                f"[frame_selection:export] Saving rejected preview {order}/{min(len(rejected_frames), cfg.max_rejected_preview)}",
                 rejected_preview=rejected_preview.copy(),
             )
 
@@ -561,15 +754,22 @@ def select_frames(
             writer.writeheader()
             writer.writerows(export_payload["selected_frames"])
 
+        logger.info(
+            "[frame_selection:colmap_prep] Copying %d frames to COLMAP images directory",
+            len(selected_entries),
+        )
+        _progress_callback(
+            progress_callback, 97,
+            f"[frame_selection:colmap_prep] Copying {len(selected_entries)} frames to COLMAP input directory",
+        )
         for order, entry in enumerate(selected_entries, 1):
             source = selected_dir / entry["output_file"]
             destination = colmap_images_dir / entry["output_file"]
             shutil.copy2(source, destination)
             progress = 97 + int(2 * order / max(len(selected_entries), 1))
             _progress_callback(
-                progress_callback,
-                progress,
-                f"[frame_selection:colmap_prep] Preparing COLMAP images {order} of {len(selected_entries)}",
+                progress_callback, progress,
+                f"[frame_selection:colmap_prep] Preparing COLMAP image {order}/{len(selected_entries)}",
             )
         (colmap_dir / "frames.json").write_text(json.dumps(export_payload, indent=2))
 
@@ -595,6 +795,26 @@ def select_frames(
         "rejected_preview": rejected_preview,
         "metadata": metadata,
     }
-    _progress_callback(progress_callback, 100, f"[frame_selection:summary] Export complete: {len(selected_entries)} frames ready for COLMAP")
+
+    logger.info(
+        "[frame_selection:summary] DONE — %d/%d frames selected for COLMAP (%.1f%%) "
+        "| blurry=%d | exposure=%d | redundant=%d",
+        len(selected_entries), total_frames,
+        100.0 * len(selected_entries) / max(total_frames, 1),
+        blurry_count, exposure_rejected_count, redundant_rejections,
+    )
+    _progress_callback(
+        progress_callback, 100,
+        f"[frame_selection:summary] Export complete: {len(selected_entries)} frames ready for COLMAP "
+        f"| blurry={blurry_count} | exposure_rejected={exposure_rejected_count} | redundant={redundant_rejections}",
+        selected_count=len(selected_entries),
+        stats={
+            "analyzed_frames": processed_frames,
+            "blurry_frames": blurry_count,
+            "exposure_rejected": exposure_rejected_count,
+            "redundant_frames": redundant_rejections,
+            "selected_frames": len(selected_entries),
+        },
+    )
 
     return result
