@@ -108,21 +108,36 @@ function writeJsonFile<T>(filePath: string, items: T[]) {
 
 // ---------------- JOB REPOSITORY ----------------
 
+const LOGS_MAX_BYTES = 32 * 1024;
+
+function capLogs(value: string): string {
+  const byteLength = Buffer.byteLength(value, "utf8");
+  if (byteLength <= LOGS_MAX_BYTES) {
+    return value;
+  }
+  const buf = Buffer.from(value, "utf8");
+  const sliced = buf.subarray(byteLength - LOGS_MAX_BYTES).toString("utf8");
+  const firstNewline = sliced.indexOf("\n");
+  return firstNewline >= 0 ? sliced.slice(firstNewline + 1) : sliced;
+}
+
 export async function updateJob(
   id: string,
   data: Partial<Omit<Job, "id" | "createdAt">>
 ): Promise<Job | null> {
   const now = new Date();
+  const normalizedData =
+    typeof data.logs === "string" ? { ...data, logs: capLogs(data.logs) } : data;
 
   if (prisma && isPrismaAvailable) {
     try {
       const prismaData: any = {
-        ...data,
+        ...normalizedData,
         updatedAt: now,
       };
-      if (data.frameStats && prisma.job) {
+      if (normalizedData.frameStats && prisma.job) {
         // If Prisma schema lacks frameStats column, persist JSON in frameSelectionPath
-        prismaData.frameSelectionPath = JSON.stringify(data.frameStats);
+        prismaData.frameSelectionPath = JSON.stringify(normalizedData.frameStats);
         delete prismaData.frameStats;
       }
       const updated = await prisma.job.update({
@@ -130,8 +145,8 @@ export async function updateJob(
         data: prismaData,
       });
       const res = updated as unknown as Job;
-      if (data.frameStats) {
-        res.frameStats = data.frameStats;
+      if (normalizedData.frameStats) {
+        res.frameStats = normalizedData.frameStats;
       }
       return res;
     } catch (err) {
@@ -146,7 +161,7 @@ export async function updateJob(
 
   jobs[index] = {
     ...jobs[index],
-    ...data,
+    ...normalizedData,
     updatedAt: now,
   };
   writeJsonFile(JSON_DB_PATH, jobs);
@@ -158,7 +173,7 @@ export async function appendJobLog(id: string, message: string): Promise<Job | n
   if (!job) return null;
 
   const logLine = `[${new Date().toISOString()}] ${message}`;
-  const logs = job.logs ? `${job.logs}\n${logLine}` : logLine;
+  const logs = capLogs(job.logs ? `${job.logs}\n${logLine}` : logLine);
   return updateJob(id, { logs });
 }
 

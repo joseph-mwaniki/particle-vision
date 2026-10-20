@@ -177,7 +177,8 @@ def run_full_pipeline(
 
     on_status(
         STAGE_COLMAP,
-        f"[COLMAP:init] Selected {selected_count} ordered frames — beginning feature extraction",
+        f"[COLMAP:init] Selected {selected_count} ordered frames at {selected_frames.resolve()} "
+        f"— beginning feature extraction",
         19,
     )
 
@@ -188,7 +189,8 @@ def run_full_pipeline(
         on_progress=on_colmap_progress,
     )
 
-
+    # Temp staging under frame_selection is no longer needed after COLMAP has
+    # consumed the validated images/ directory (which lives under colmap/).
     shutil.rmtree(work_dir / "frame_selection", ignore_errors=True)
 
     on_status(STAGE_GSPLAT, "COLMAP complete — starting gsplat training", 32)

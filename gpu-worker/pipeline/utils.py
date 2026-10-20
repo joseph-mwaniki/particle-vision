@@ -78,16 +78,24 @@ def extract_frames_from_video(
 ) -> Path:
     """Run CPU frame selection and return the COLMAP-ready selected-images directory.
 
-    Only frames accepted by the selection algorithm are written for COLMAP. The
-    source video is not sampled at a fixed FPS and is never passed through as
-    an unfiltered image sequence.
+    Layout under dest_dir (job workspace):
+      frame_selection/          metadata, manifests, temp staging
+      colmap/images/            final validated selected JPEGs (COLMAP input)
+
+    Only frames accepted by the selection algorithm are written for COLMAP.
     """
     if not video_path.is_file() or video_path.stat().st_size == 0:
         raise RuntimeError(f"Source video is missing or empty: {video_path}")
 
-    output_root = ensure_dir(dest_dir / "frame_selection")
-    colmap_images = output_root / "colmap_input" / "images"
-    _clear_dir(output_root)
+    selection_root = ensure_dir(dest_dir / "frame_selection")
+    colmap_images = ensure_dir(dest_dir / "colmap" / "images")
+    _clear_dir(selection_root)
+    # Fresh COLMAP images dir for this attempt (avoids stale contamination).
+    for stale in sorted(colmap_images.glob("*")):
+        if stale.is_file() or stale.is_symlink():
+            stale.unlink(missing_ok=True)
+        elif stale.is_dir():
+            shutil.rmtree(stale, ignore_errors=True)
 
     selector_config = config or SelectorConfig(max_rejected_preview=0)
 
@@ -100,7 +108,7 @@ def extract_frames_from_video(
             on_log(f"[frame_selection:{progress}%] {message}{extra}")
 
     if on_log:
-        on_log(f"Selecting reconstruction frames from {video_path.name} on CPU")
+        on_log(f"Selecting reconstruction frames from {video_path.name} on CPU (disk-backed)")
 
     try:
         result = select_frames(
@@ -108,14 +116,25 @@ def extract_frames_from_video(
             config=selector_config,
             job_id=job_id,
             progress_callback=progress_callback,
-            output_root=output_root,
+            output_root=selection_root,
+            colmap_images_dir=colmap_images,
         )
     except ValueError as exc:
-        raise RuntimeError(f"Video decoding failed: {exc}") from exc
+        # VideoCapture / metadata failures raise ValueError with "Unable to open".
+        if "Unable to open" in str(exc) or "open video" in str(exc).lower():
+            raise RuntimeError(f"Video decoding failed: {exc}") from exc
+        raise
+    except OSError as exc:
+        raise RuntimeError(f"Frame selection disk I/O failed: {exc}") from exc
 
+    # Prefer the absolute path reported by the selector when available.
+    reported = result.get("colmap_images_dir")
+    if reported:
+        colmap_images = Path(reported)
     selected_count = int(result.get("selected_count") or 0)
     frame_files = sorted(p for p in colmap_images.glob("*.jpg") if p.is_file())
-    if selected_count <= 0 or not frame_files:
+    valid_on_disk = int((result.get("stats") or {}).get("valid_on_disk") or len(frame_files))
+    if selected_count <= 0 or valid_on_disk <= 0 or not frame_files:
         raise RuntimeError("Frame selection produced no usable frames for reconstruction")
 
     for warning in result.get("warnings") or []:
@@ -125,16 +144,20 @@ def extract_frames_from_video(
     metadata = {
         "source_video": video_path.name,
         "job_id": result.get("job_id"),
-        "frame_count": selected_count,
+        "frame_count": valid_on_disk,
         "stats": result.get("stats", {}),
         "warnings": result.get("warnings", []),
         "ordered_frames": [p.name for p in frame_files],
-        "algorithm": "frame-extractor-algorithm",
+        "colmap_images_dir": str(colmap_images.resolve()),
+        "algorithm": "frame-extractor-algorithm-disk-backed",
+        "write_failures": result.get("write_failures", []),
+        "validation": result.get("validation", {}),
     }
-    (output_root / "frame_selection.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+    (selection_root / "frame_selection.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
     if on_log:
         on_log(
-            f"Frame selection kept {selected_count} of {result.get('stats', {}).get('total_frames', '?')} frames"
+            f"Frame selection kept {valid_on_disk} of {result.get('stats', {}).get('total_frames', '?')} frames "
+            f"at {colmap_images.resolve()}"
         )
     return colmap_images
 

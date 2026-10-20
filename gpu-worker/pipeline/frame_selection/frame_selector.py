@@ -19,8 +19,24 @@ from .config import SelectorConfig
 from .coverage import find_large_gaps
 from .exposure_detector import analyze_exposure
 from .frame import FrameMetrics
+from .image_io import (
+    JPEG_QUALITY,
+    clear_image_dir,
+    place_selected_image,
+    validate_image_directory,
+    validate_image_file,
+    write_jpeg,
+)
+from .progress import ProgressThrottler, is_stage_boundary_message
 from .scoring import compute_frame_score
 from .similarity import compute_similarity, prepare_similarity_frame
+from .telemetry import (
+    StageTimer,
+    directory_size_bytes,
+    ensure_disk_space,
+    format_bytes,
+    snapshot,
+)
 from .video_reader import get_video_metadata, iter_frames
 
 logger = logging.getLogger(__name__)
@@ -34,57 +50,70 @@ COLMAP_IMAGES_DIR = COLMAP_DIR / "images"
 _EXPORT_LOCK = threading.Lock()
 
 
-def _process_frame_chunk(args: tuple[str, int, int]) -> list[dict[str, Any]]:
-    """
-    Process a chunk of frames from the video file.
+def _process_frame_chunk(args: tuple[str, int, int, str, int]) -> list[dict[str, Any]]:
+    """Extract a chunk of frames to unique JPEGs on disk; return metadata only.
 
-    FIX: thumbnails and images are serialised as raw bytes so they survive
-    pickling across ProcessPoolExecutor worker processes.  Previously the
-    numpy arrays were returned directly, which caused silent pickling failures
-    that forced fallback to sequential mode (leaving all CPU cores idle).
+    Full-resolution pixels stay on disk. Workers return paths + small thumbnails
+    so ProcessPoolExecutor results do not ferry multi-megabyte arrays.
     """
-    video_path_str, start_frame, count = args
+    video_path_str, start_frame, count, temp_dir_str, jpeg_quality = args
+    temp_dir = Path(temp_dir_str)
+    temp_dir.mkdir(parents=True, exist_ok=True)
+
     cap = cv2.VideoCapture(video_path_str)
+    if not cap.isOpened():
+        raise ValueError(f"Unable to open video file: {video_path_str}")
     cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
     fps = cap.get(cv2.CAP_PROP_FPS) or 1.0
-    results = []
-    for offset in range(count):
-        ret, frame = cap.read()
-        if not ret:
-            break
-        frame_index = start_frame + offset
-        timestamp = frame_index / fps
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        sharpness = variance_of_laplacian(gray)
-        brightness, dark_ratio, bright_ratio, exposure_label = analyze_exposure(frame)
-        thumbnail_arr = prepare_similarity_frame(gray, (64, 64))
+    results: list[dict[str, Any]] = []
+    try:
+        for offset in range(count):
+            ret, frame = cap.read()
+            if not ret:
+                break
+            frame_index = start_frame + offset
+            timestamp = frame_index / fps
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            sharpness = variance_of_laplacian(gray)
+            brightness, dark_ratio, bright_ratio, exposure_label = analyze_exposure(frame)
+            thumbnail_arr = prepare_similarity_frame(gray, (64, 64))
 
-        results.append({
-            "frame_index": frame_index,
-            "timestamp": timestamp,
-            "sharpness": float(sharpness),
-            "brightness": float(brightness),
-            "dark_ratio": float(dark_ratio),
-            "bright_ratio": float(bright_ratio),
-            "exposure_label": exposure_label,
-            # Serialise as bytes so they cross process boundaries safely
-            "thumbnail_bytes": thumbnail_arr.tobytes(),
-            "thumbnail_shape": thumbnail_arr.shape,
-            "thumbnail_dtype": str(thumbnail_arr.dtype),
-            "image_bytes": frame.tobytes(),
-            "image_shape": frame.shape,
-            "image_dtype": str(frame.dtype),
-        })
-    cap.release()
+            image_path = temp_dir / f"frame_{frame_index:06d}.jpg"
+            write_jpeg(image_path, frame, quality=jpeg_quality)
+            ok, reason, dims = validate_image_file(image_path)
+            if not ok:
+                raise RuntimeError(
+                    f"Failed to stage frame {frame_index} at {image_path}: {reason}"
+                )
+
+            results.append({
+                "frame_index": frame_index,
+                "timestamp": float(timestamp),
+                "sharpness": float(sharpness),
+                "brightness": float(brightness),
+                "dark_ratio": float(dark_ratio),
+                "bright_ratio": float(bright_ratio),
+                "exposure_label": exposure_label,
+                "image_path": str(image_path),
+                "width": dims[0] if dims else 0,
+                "height": dims[1] if dims else 0,
+                "thumbnail_bytes": thumbnail_arr.tobytes(),
+                "thumbnail_shape": thumbnail_arr.shape,
+                "thumbnail_dtype": str(thumbnail_arr.dtype),
+            })
+            del frame, gray
+    finally:
+        cap.release()
     return results
 
 
-def _reconstruct_parallel_items(raw_items: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Rebuild numpy arrays from byte payloads returned by worker processes."""
-    items = []
+def _reconstruct_disk_items(raw_items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Rebuild lightweight metadata + thumbnails from worker results (no full frames)."""
+    items: list[dict[str, Any]] = []
     for raw in raw_items:
-        thumbnail = np.frombuffer(raw["thumbnail_bytes"], dtype=raw["thumbnail_dtype"]).reshape(raw["thumbnail_shape"])
-        image = np.frombuffer(raw["image_bytes"], dtype=raw["image_dtype"]).reshape(raw["image_shape"]).copy()
+        thumbnail = np.frombuffer(
+            raw["thumbnail_bytes"], dtype=np.dtype(raw["thumbnail_dtype"])
+        ).reshape(raw["thumbnail_shape"]).copy()
         items.append({
             "frame_index": raw["frame_index"],
             "timestamp": raw["timestamp"],
@@ -93,8 +122,8 @@ def _reconstruct_parallel_items(raw_items: list[dict[str, Any]]) -> list[dict[st
             "dark_ratio": raw["dark_ratio"],
             "bright_ratio": raw["bright_ratio"],
             "exposure_label": raw["exposure_label"],
+            "image_path": raw["image_path"],
             "thumbnail": thumbnail,
-            "image": image,
         })
     return items
 
@@ -155,13 +184,36 @@ def _progress_callback(callback: Callable | None, progress: int, message: str, *
         callback(progress, message, updates)
 
 
-def _resolve_output_dirs(output_root: Path | None) -> tuple[Path, Path, Path, Path, Path]:
+def _resolve_output_dirs(
+    output_root: Path | None,
+    colmap_images_dir: Path | None = None,
+) -> tuple[Path, Path, Path, Path, Path]:
+    """Return (output_dir, temp_frames_dir, rejected_dir, colmap_dir, colmap_images_dir)."""
     output_dir = Path(output_root) if output_root is not None else OUTPUT_DIR
-    selected_dir = output_dir / "selected_frames" if output_root is not None else SELECTED_DIR
-    rejected_dir = output_dir / "rejected_frames" if output_root is not None else REJECTED_DIR
-    colmap_dir = output_dir / "colmap_input" if output_root is not None else COLMAP_DIR
-    colmap_images_dir = colmap_dir / "images" if output_root is not None else COLMAP_IMAGES_DIR
-    return output_dir, selected_dir, rejected_dir, colmap_dir, colmap_images_dir
+    temp_frames_dir = output_dir / "temp-frames"
+    rejected_dir = output_dir / "rejected_previews" if output_root is not None else REJECTED_DIR
+    if colmap_images_dir is not None:
+        images_dir = Path(colmap_images_dir)
+        colmap_dir = images_dir.parent
+    elif output_root is not None:
+        # Prefer sibling colmap/images under the job workspace when output_root
+        # is .../frame_selection; fall back to legacy nested colmap_input.
+        job_root = output_dir.parent
+        preferred = job_root / "colmap" / "images"
+        images_dir = preferred
+        colmap_dir = preferred.parent
+    else:
+        colmap_dir = COLMAP_DIR
+        images_dir = COLMAP_IMAGES_DIR
+    return output_dir, temp_frames_dir, rejected_dir, colmap_dir, images_dir
+
+
+def _estimate_extraction_bytes(metadata: dict[str, Any], frame_count: int) -> int:
+    width = int(metadata.get("width") or 1920)
+    height = int(metadata.get("height") or 1080)
+    # Rough JPEG size heuristic (~0.15 bytes/pixel at quality 95) + headroom.
+    per_frame = max(50_000, int(width * height * 0.15))
+    return per_frame * max(frame_count, 1) + 200_000_000
 
 
 def select_frames(
@@ -170,6 +222,7 @@ def select_frames(
     job_id: str | None = None,
     progress_callback: Callable | None = None,
     output_root: Path | None = None,
+    colmap_images_dir: Path | None = None,
 ) -> dict[str, Any]:
     cfg = config or SelectorConfig()
     export_id = job_id or uuid.uuid4().hex
@@ -177,36 +230,81 @@ def select_frames(
     total_frames = int(metadata["frame_count"])
     max_frames = cfg.max_analysis_frames or total_frames
 
+    output_dir, temp_frames_dir, rejected_dir, colmap_dir, images_dir = _resolve_output_dirs(
+        output_root, colmap_images_dir=colmap_images_dir
+    )
+    output_dir.mkdir(parents=True, exist_ok=True)
+    temp_frames_dir.mkdir(parents=True, exist_ok=True)
+    rejected_dir.mkdir(parents=True, exist_ok=True)
+    images_dir.mkdir(parents=True, exist_ok=True)
+
+    # Fresh job directories — prevent stale images from contaminating this run.
+    if temp_frames_dir.exists():
+        shutil.rmtree(temp_frames_dir, ignore_errors=True)
+    temp_frames_dir.mkdir(parents=True, exist_ok=True)
+    clear_image_dir(images_dir)
+    clear_image_dir(rejected_dir)
+
+    ensure_disk_space(
+        output_dir,
+        _estimate_extraction_bytes(metadata, max_frames),
+    )
+    snapshot(
+        "before_extraction",
+        output_dir,
+        job_id=export_id,
+        video=metadata.get("filename"),
+        resolution=f"{metadata.get('width')}x{metadata.get('height')}",
+        fps=metadata.get("fps"),
+        duration=round(float(metadata.get("duration") or 0), 3),
+        candidate_frames=max_frames,
+        colmap_images_dir=str(images_dir.resolve()),
+    )
+
+    throttler = ProgressThrottler(min_interval=2.0, min_pct_delta=1.0)
+    original_progress_callback = progress_callback
+
+    def progress_callback(progress: int, message: str, updates: dict[str, Any] | None = None) -> None:
+        if original_progress_callback is None:
+            return
+        force = progress >= 100 or is_stage_boundary_message(message)
+        if throttler.should_emit(float(progress), force=force):
+            original_progress_callback(progress, message, updates or {})
+
     candidate_frames: list[FrameMetrics] = []
     rejected_frames: list[FrameMetrics] = []
     processed_frames = 0
     blurry_count = 0
     exposure_rejected_count = 0
     redundant_rejections = 0
+    extraction_failures = 0
+    stage_timings: dict[str, float] = {}
 
     # ------------------------------------------------------------------ #
-    # STAGE 1: Multi-core parallel frame extraction                       #
-    # FIX: thumbnails/images now travel as bytes — fully picklable,       #
-    # so workers actually execute in parallel instead of silently failing. #
+    # STAGE 1: Disk-backed multi-core frame extraction                     #
     # ------------------------------------------------------------------ #
+    extract_timer = StageTimer("extraction")
     num_cpus = os.cpu_count() or 1
     analyzed_items: list[dict[str, Any]] = []
     parallel_ok = False
+    workers_used = 1
 
     if max_frames >= 40 and num_cpus > 1:
         workers = min(num_cpus, 16)
         chunk_size = max(10, (max_frames + workers - 1) // workers)
         chunks = [
-            (str(video_path), start_idx, min(chunk_size, max_frames - start_idx))
+            (str(video_path), start_idx, min(chunk_size, max_frames - start_idx), str(temp_frames_dir), JPEG_QUALITY)
             for start_idx in range(0, max_frames, chunk_size)
         ]
+        workers_used = workers
         logger.info(
-            "[frame_selection:extraction] Launching parallel extraction — %d workers, %d chunks, %d frames",
-            workers, len(chunks), max_frames,
+            "[frame_selection:extraction] Disk-backed parallel extraction — %d workers, %d chunks, %d frames → %s",
+            workers, len(chunks), max_frames, temp_frames_dir,
         )
         _progress_callback(
             progress_callback, 1,
-            f"[frame_selection:extraction] Starting parallel extraction with {workers} CPU workers ({len(chunks)} chunks)",
+            f"[frame_selection:extraction] Starting parallel extraction with {workers} CPU workers "
+            f"({len(chunks)} chunks) writing to disk",
         )
         try:
             raw_batches: list[list[dict[str, Any]]] = []
@@ -214,12 +312,12 @@ def select_frames(
                 for batch in executor.map(_process_frame_chunk, chunks):
                     raw_batches.append(batch)
             for batch in raw_batches:
-                analyzed_items.extend(_reconstruct_parallel_items(batch))
+                analyzed_items.extend(_reconstruct_disk_items(batch))
             parallel_ok = len(analyzed_items) >= int(max_frames * 0.9)
             if parallel_ok:
                 logger.info(
-                    "[frame_selection:extraction] Parallel extraction complete — %d frames across %d workers",
-                    len(analyzed_items), workers,
+                    "[frame_selection:extraction] Parallel extraction complete — %d frames staged on disk",
+                    len(analyzed_items),
                 )
             else:
                 logger.warning(
@@ -227,48 +325,81 @@ def select_frames(
                     len(analyzed_items), max_frames,
                 )
                 analyzed_items = []
+                shutil.rmtree(temp_frames_dir, ignore_errors=True)
+                temp_frames_dir.mkdir(parents=True, exist_ok=True)
         except Exception as exc:
             logger.warning(
                 "[frame_selection:extraction] Parallel extraction failed (%s) — falling back to sequential",
                 exc,
             )
             analyzed_items = []
+            shutil.rmtree(temp_frames_dir, ignore_errors=True)
+            temp_frames_dir.mkdir(parents=True, exist_ok=True)
 
     if not parallel_ok:
         analyzed_items = []
-        logger.info("[frame_selection:extraction] Sequential extraction — %d frames", max_frames)
+        workers_used = 1
+        logger.info("[frame_selection:extraction] Sequential disk-backed extraction — %d frames", max_frames)
         _progress_callback(
             progress_callback, 1,
             f"[frame_selection:extraction] Sequential extraction — {max_frames} frames on 1 worker",
         )
         for frame_index, timestamp, frame in iter_frames(video_path, max_frames=max_frames):
-            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            sharpness = variance_of_laplacian(gray)
-            brightness, dark_ratio, bright_ratio, exposure_label = analyze_exposure(frame)
-            thumbnail = prepare_similarity_frame(gray, (64, 64))
-            analyzed_items.append({
-                "frame_index": frame_index,
-                "timestamp": float(timestamp),
-                "sharpness": float(sharpness),
-                "brightness": float(brightness),
-                "dark_ratio": float(dark_ratio),
-                "bright_ratio": float(bright_ratio),
-                "exposure_label": exposure_label,
-                "thumbnail": thumbnail,
-                "image": frame,
-            })
+            try:
+                gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                sharpness = variance_of_laplacian(gray)
+                brightness, dark_ratio, bright_ratio, exposure_label = analyze_exposure(frame)
+                thumbnail = prepare_similarity_frame(gray, (64, 64))
+                image_path = temp_frames_dir / f"frame_{frame_index:06d}.jpg"
+                write_jpeg(image_path, frame)
+                ok, reason, _dims = validate_image_file(image_path)
+                if not ok:
+                    raise RuntimeError(reason)
+                analyzed_items.append({
+                    "frame_index": frame_index,
+                    "timestamp": float(timestamp),
+                    "sharpness": float(sharpness),
+                    "brightness": float(brightness),
+                    "dark_ratio": float(dark_ratio),
+                    "bright_ratio": float(bright_ratio),
+                    "exposure_label": exposure_label,
+                    "thumbnail": thumbnail,
+                    "image_path": str(image_path),
+                })
+            except Exception as exc:
+                extraction_failures += 1
+                logger.error(
+                    "[frame_selection:extraction] Failed staging frame %d: %s",
+                    frame_index, exc,
+                )
+            finally:
+                del frame
 
-    # Ensure temporal order regardless of chunk ordering
     analyzed_items.sort(key=lambda item: item["frame_index"])
+    stage_timings["extraction_s"] = extract_timer.stop()
+    staged_bytes = directory_size_bytes(temp_frames_dir)
+    snapshot(
+        "after_extraction",
+        output_dir,
+        staged_frames=len(analyzed_items),
+        extraction_failures=extraction_failures,
+        workers=workers_used,
+        temp_bytes=format_bytes(staged_bytes),
+        extraction_s=round(stage_timings["extraction_s"], 2),
+    )
+
+    if not analyzed_items:
+        raise RuntimeError("Frame extraction staged zero readable frames on disk")
 
     _progress_callback(
         progress_callback, 10,
-        f"[frame_selection:extraction] Extracted {len(analyzed_items)} raw frames — starting quality analysis",
+        f"[frame_selection:extraction] Extracted {len(analyzed_items)} frames to disk — starting quality analysis",
     )
 
     # ------------------------------------------------------------------ #
     # STAGE 2: Adaptive blur threshold calibration                        #
     # ------------------------------------------------------------------ #
+    quality_timer = StageTimer("quality")
     valid_sharpness = [
         item["sharpness"]
         for item in analyzed_items
@@ -296,7 +427,7 @@ def select_frames(
     )
 
     # ------------------------------------------------------------------ #
-    # STAGE 3: Per-frame quality classification                           #
+    # STAGE 3: Per-frame quality classification (metadata + thumbnails)   #
     # ------------------------------------------------------------------ #
     logger.info("[frame_selection:quality] Classifying %d frames for blur/exposure", len(analyzed_items))
     _progress_callback(
@@ -319,14 +450,14 @@ def select_frames(
             bright_ratio=float(item["bright_ratio"]),
             quality_label=quality_label,
             exposure_label=exposure_label,
-            image=item["image"],
+            image_path=item["image_path"],
             thumbnail=item["thumbnail"],
             status="candidate",
         )
 
         if quality_label == "blurry":
             blurry_count += 1
-            candidate.status = "candidate"  # still a candidate — bridge logic decides
+            candidate.status = "candidate"
             candidate.reason = "BLUR"
             candidate.selected = False
 
@@ -373,6 +504,10 @@ def select_frames(
             selected_count=0,
         )
 
+    # Free extraction batch references; FrameMetrics hold paths + thumbnails only.
+    analyzed_items.clear()
+    stage_timings["quality_s"] = quality_timer.stop()
+
     logger.info(
         "[frame_selection:quality] Quality pass complete — %d candidates, %d blurry, %d exposure-rejected",
         len(candidate_frames), blurry_count, exposure_rejected_count,
@@ -389,10 +524,12 @@ def select_frames(
             "selected_frames": 0,
         },
     )
+    snapshot("during_selection", output_dir, candidates=len(candidate_frames))
 
     # ------------------------------------------------------------------ #
-    # STAGE 4: Windowed similarity filtering                              #
+    # STAGE 4: Windowed similarity filtering (thumbnails only)            #
     # ------------------------------------------------------------------ #
+    similarity_timer = StageTimer("similarity")
     windowed_candidates: dict[int, list[FrameMetrics]] = {}
     for candidate in candidate_frames:
         window_id = int(candidate.timestamp // cfg.window_seconds)
@@ -448,11 +585,6 @@ def select_frames(
             if next_frame is not None:
                 next_similarity = compute_similarity(candidate.thumbnail, next_frame.thumbnail)
 
-            # FIX: When there is no previous frame (first frame of the video),
-            # previous_similarity was hardcoded to 1.0, which caused
-            # evaluate_temporal_bridge to classify the first frame as REDUNDANT
-            # and reject it — leading to selected=0 for the entire run.
-            # The correct value is 0.0 (no overlap with a non-existent frame).
             if previous_selected is None:
                 previous_similarity = 0.0
             else:
@@ -499,14 +631,9 @@ def select_frames(
                 candidate.selected = False
                 candidate.reason = "BLURRY"
                 rejected_frames.append(candidate)
-                blurry_count += 1
+                # Already counted as blurry during quality pass; do not double-count.
                 report_selection_progress(len(selected_frames) + len(selected_window), "BLURRY")
                 continue
-
-            # NOTE: The duplicate REDUNDANT guard that existed here (checking
-            # previous_similarity >= threshold a second time) has been removed.
-            # evaluate_temporal_bridge already handles this correctly and the
-            # duplicate was causing valid frames to be rejected twice.
 
             candidate.viewpoint_change_score = max(0.4, 1.0 - previous_similarity)
             candidate.final_score = compute_frame_score(candidate, cfg)
@@ -520,7 +647,6 @@ def select_frames(
                 recent_selected = recent_selected[-cfg.max_frames_per_window:]
             report_selection_progress(len(selected_frames) + len(selected_window), status)
 
-        # Minimum-frame fallback per window
         if len(selected_window) < cfg.min_frames_per_window:
             fallback_candidates = sorted(
                 [c for c in current_window if c not in selected_window],
@@ -542,6 +668,7 @@ def select_frames(
         {frame.frame_index: frame for frame in selected_frames}.values(),
         key=lambda item: item.timestamp,
     )
+    stage_timings["similarity_s"] = similarity_timer.stop()
 
     logger.info(
         "[frame_selection:similarity] Similarity pass complete — %d selected, %d redundant rejections",
@@ -564,6 +691,7 @@ def select_frames(
     # ------------------------------------------------------------------ #
     # STAGE 5: Coverage gap filling                                       #
     # ------------------------------------------------------------------ #
+    coverage_timer = StageTimer("coverage")
     warnings: list[str] = []
     warnings.extend(find_large_gaps(selected_frames, cfg.coverage_gap_seconds))
 
@@ -608,6 +736,7 @@ def select_frames(
         f"[frame_selection:coverage] Coverage pass complete — {gaps_filled} gaps filled, {len(selected_frames)} total",
         selected_count=len(selected_frames),
     )
+    stage_timings["coverage_s"] = coverage_timer.stop()
 
     selected_frames = sorted(
         {frame.frame_index: frame for frame in selected_frames}.values(),
@@ -656,15 +785,10 @@ def select_frames(
         )
 
     # ------------------------------------------------------------------ #
-    # STAGE 7: Export — write to disk and prepare COLMAP images          #
+    # STAGE 7: Place selected images directly into COLMAP images/         #
     # ------------------------------------------------------------------ #
-    output_dir, selected_dir, rejected_dir, colmap_dir, colmap_images_dir = _resolve_output_dirs(output_root)
-    prefix = export_id[:12]
-    output_dir.mkdir(parents=True, exist_ok=True)
-    selected_dir.mkdir(parents=True, exist_ok=True)
-    rejected_dir.mkdir(parents=True, exist_ok=True)
-    colmap_images_dir.mkdir(parents=True, exist_ok=True)
-
+    export_timer = StageTimer("export")
+    prefix = export_id.replace("-", "")[:12] or "job"
     video_entry = {
         "job_id": export_id,
         "source_video": metadata["filename"],
@@ -673,26 +797,34 @@ def select_frames(
     }
 
     logger.info(
-        "[frame_selection:export] Writing %d selected + %d rejected previews to disk",
-        len(selected_frames), min(len(rejected_frames), cfg.max_rejected_preview),
+        "[frame_selection:export] Placing %d selected frames directly into COLMAP images dir %s",
+        len(selected_frames), images_dir.resolve(),
     )
     _progress_callback(
         progress_callback, 80,
-        f"[frame_selection:export] Writing {len(selected_frames)} selected frames to disk",
+        f"[frame_selection:export] Writing {len(selected_frames)} selected frames to {images_dir}",
         selected_count=len(selected_frames),
     )
 
-    with _EXPORT_LOCK:
-        for folder in (selected_dir, rejected_dir, colmap_images_dir):
-            for old_image in folder.glob(f"{prefix}_*.jpg"):
-                old_image.unlink()
+    write_failures: list[dict[str, Any]] = []
+    selected_entries: list[dict[str, Any]] = []
+    rejected_preview: list[dict[str, Any]] = []
 
-        selected_entries: list[dict[str, Any]] = []
+    with _EXPORT_LOCK:
+        clear_image_dir(images_dir)
+
         for order, frame in enumerate(selected_frames, 1):
             output_name = f"{prefix}_frame_{order:06d}.jpg"
-            cv2.imwrite(str(selected_dir / output_name), frame.image)
-            selected_entries.append(
-                {
+            destination = images_dir / output_name
+            source = Path(frame.image_path) if frame.image_path else None
+            try:
+                if source is None or not source.is_file():
+                    raise RuntimeError(f"Missing staged source for frame {frame.frame_index}")
+                place_selected_image(source, destination)
+                ok, reason, dims = validate_image_file(destination)
+                if not ok:
+                    raise RuntimeError(f"Validation failed after place: {reason}")
+                selected_entries.append({
                     "job_id": export_id,
                     "source_video": metadata["filename"],
                     "output_file": output_name,
@@ -700,8 +832,20 @@ def select_frames(
                     "timestamp": round(float(frame.timestamp), 6),
                     "status": "selected",
                     "reason": frame.reason,
-                }
-            )
+                    "width": dims[0] if dims else None,
+                    "height": dims[1] if dims else None,
+                })
+            except Exception as exc:
+                write_failures.append({
+                    "original_frame": frame.frame_index,
+                    "timestamp": frame.timestamp,
+                    "destination": str(destination),
+                    "error": str(exc),
+                })
+                logger.error(
+                    "[frame_selection:export] Failed selected frame %d → %s: %s",
+                    frame.frame_index, destination, exc,
+                )
             progress = 80 + int(10 * order / max(len(selected_frames), 1))
             _progress_callback(
                 progress_callback, progress,
@@ -717,25 +861,30 @@ def select_frames(
                 },
             )
 
-        rejected_preview: list[dict[str, Any]] = []
-        for order, frame in enumerate(rejected_frames[: cfg.max_rejected_preview], 1):
+        # Optional rejected previews (load from disk only for the capped preview set).
+        preview_limit = min(len(rejected_frames), cfg.max_rejected_preview)
+        for order, frame in enumerate(rejected_frames[:preview_limit], 1):
             output_name = f"{prefix}_rejected_{order:06d}.jpg"
-            cv2.imwrite(str(rejected_dir / output_name), frame.image)
-            rejected_preview.append(
-                {
-                    "job_id": export_id,
-                    "source_video": metadata["filename"],
-                    "output_file": output_name,
-                    "original_frame": frame.frame_index,
-                    "timestamp": round(float(frame.timestamp), 6),
-                    "status": "rejected",
-                    "reason": frame.reason,
-                }
-            )
-            progress = 90 + int(7 * order / max(min(len(rejected_frames), cfg.max_rejected_preview), 1))
+            dest = rejected_dir / output_name
+            try:
+                source = Path(frame.image_path) if frame.image_path else None
+                if source and source.is_file():
+                    shutil.copy2(source, dest)
+                    rejected_preview.append({
+                        "job_id": export_id,
+                        "source_video": metadata["filename"],
+                        "output_file": output_name,
+                        "original_frame": frame.frame_index,
+                        "timestamp": round(float(frame.timestamp), 6),
+                        "status": "rejected",
+                        "reason": frame.reason,
+                    })
+            except OSError as exc:
+                logger.warning("Rejected preview write failed for frame %d: %s", frame.frame_index, exc)
+            progress = 90 + int(5 * order / max(preview_limit, 1))
             _progress_callback(
                 progress_callback, progress,
-                f"[frame_selection:export] Saving rejected preview {order}/{min(len(rejected_frames), cfg.max_rejected_preview)}",
+                f"[frame_selection:export] Saving rejected preview {order}/{preview_limit}",
                 rejected_preview=rejected_preview.copy(),
             )
 
@@ -749,72 +898,129 @@ def select_frames(
         (output_dir / "frames.json").write_text(json.dumps(export_payload, indent=2))
 
         with (output_dir / "frames.csv").open("w", newline="") as csv_file:
-            fieldnames = ["job_id", "source_video", "output_file", "original_frame", "timestamp", "status", "reason"]
-            writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
+            fieldnames = [
+                "job_id",
+                "source_video",
+                "output_file",
+                "original_frame",
+                "timestamp",
+                "status",
+                "reason",
+                "width",
+                "height",
+            ]
+            writer = csv.DictWriter(csv_file, fieldnames=fieldnames, extrasaction="ignore")
             writer.writeheader()
             writer.writerows(export_payload["selected_frames"])
 
-        logger.info(
-            "[frame_selection:colmap_prep] Copying %d frames to COLMAP images directory",
-            len(selected_entries),
-        )
-        _progress_callback(
-            progress_callback, 97,
-            f"[frame_selection:colmap_prep] Copying {len(selected_entries)} frames to COLMAP input directory",
-        )
-        for order, entry in enumerate(selected_entries, 1):
-            source = selected_dir / entry["output_file"]
-            destination = colmap_images_dir / entry["output_file"]
-            shutil.copy2(source, destination)
-            progress = 97 + int(2 * order / max(len(selected_entries), 1))
-            _progress_callback(
-                progress_callback, progress,
-                f"[frame_selection:colmap_prep] Preparing COLMAP image {order}/{len(selected_entries)}",
-            )
         (colmap_dir / "frames.json").write_text(json.dumps(export_payload, indent=2))
+
+    # Validate COLMAP input from disk — counts come from files, not attempts.
+    validation = validate_image_directory(images_dir)
+    valid_count = int(validation["valid_count"])
+    if validation["invalid"]:
+        for item in validation["invalid"]:
+            write_failures.append({
+                "original_frame": None,
+                "timestamp": None,
+                "destination": item["path"],
+                "error": item["reason"],
+            })
+            try:
+                Path(item["path"]).unlink(missing_ok=True)
+            except OSError:
+                pass
+        validation = validate_image_directory(images_dir)
+        valid_count = int(validation["valid_count"])
+
+    # Drop rejected temp frames; keep only what COLMAP needs (already placed).
+    try:
+        shutil.rmtree(temp_frames_dir, ignore_errors=True)
+    except OSError:
+        pass
+
+    stage_timings["export_s"] = export_timer.stop()
+    snapshot(
+        "before_colmap",
+        images_dir,
+        selected_attempted=len(selected_frames),
+        valid_on_disk=valid_count,
+        write_failures=len(write_failures),
+        colmap_images_dir=str(images_dir.resolve()),
+        stage_timings=stage_timings,
+    )
+
+    if valid_count < cfg.min_final_selection:
+        raise RuntimeError(
+            f"Only {valid_count} valid COLMAP images on disk after selection "
+            f"(minimum={cfg.min_final_selection}); write_failures={len(write_failures)}"
+        )
+    if valid_count == 0:
+        raise RuntimeError("No valid images in COLMAP input directory after selection")
+
+    if write_failures:
+        warnings.append(
+            f"{len(write_failures)} selected frame(s) failed write/validation and were excluded."
+        )
+
+    logger.info(
+        "[frame_selection:colmap_prep] COLMAP input ready at %s — %d valid images on disk "
+        "(attempted=%d, write_failures=%d)",
+        images_dir.resolve(), valid_count, len(selected_frames), len(write_failures),
+    )
+    _progress_callback(
+        progress_callback, 97,
+        f"[frame_selection:colmap_prep] Verified {valid_count} valid images at {images_dir.resolve()}",
+    )
 
     result = {
         "job_id": export_id,
         "output_dir": str(output_dir),
         "colmap_dir": str(colmap_dir),
-        "selected_count": len(selected_entries),
+        "colmap_images_dir": str(images_dir.resolve()),
+        "selected_count": valid_count,
         "stats": {
             "duration": round(metadata["duration"], 3),
             "fps": metadata["fps"],
             "resolution": f"{metadata['width']}x{metadata['height']}",
             "total_frames": total_frames,
+            "extracted_frames": processed_frames,
             "analyzed_frames": len(candidate_frames) + len(rejected_frames),
             "blurry_frames": blurry_count,
             "exposure_rejected": exposure_rejected_count,
             "redundant_frames": redundant_rejections,
-            "selected_frames": len(selected_entries),
-            "selected_files": [item["output_file"] for item in selected_entries],
+            "selected_frames": valid_count,
+            "selected_attempted": len(selected_frames),
+            "valid_on_disk": valid_count,
+            "write_failures": len(write_failures),
+            "extraction_failures": extraction_failures,
+            "workers": workers_used,
+            "selected_files": list(validation["valid_files"]),
+            "stage_timings_s": stage_timings,
+            "colmap_images_dir": str(images_dir.resolve()),
         },
         "warnings": warnings,
         "selected_frames": selected_entries,
         "rejected_preview": rejected_preview,
+        "write_failures": write_failures,
+        "validation": validation,
         "metadata": metadata,
     }
 
     logger.info(
-        "[frame_selection:summary] DONE — %d/%d frames selected for COLMAP (%.1f%%) "
-        "| blurry=%d | exposure=%d | redundant=%d",
-        len(selected_entries), total_frames,
-        100.0 * len(selected_entries) / max(total_frames, 1),
-        blurry_count, exposure_rejected_count, redundant_rejections,
+        "[frame_selection:summary] DONE — %d/%d frames valid on disk for COLMAP (%.1f%%) "
+        "| blurry=%d | exposure=%d | redundant=%d | write_failures=%d | path=%s",
+        valid_count, total_frames,
+        100.0 * valid_count / max(total_frames, 1),
+        blurry_count, exposure_rejected_count, redundant_rejections, len(write_failures),
+        images_dir.resolve(),
     )
     _progress_callback(
         progress_callback, 100,
-        f"[frame_selection:summary] Export complete: {len(selected_entries)} frames ready for COLMAP "
+        f"[frame_selection:summary] Export complete: {valid_count} valid frames ready for COLMAP "
         f"| blurry={blurry_count} | exposure_rejected={exposure_rejected_count} | redundant={redundant_rejections}",
-        selected_count=len(selected_entries),
-        stats={
-            "analyzed_frames": processed_frames,
-            "blurry_frames": blurry_count,
-            "exposure_rejected": exposure_rejected_count,
-            "redundant_frames": redundant_rejections,
-            "selected_frames": len(selected_entries),
-        },
+        selected_count=valid_count,
+        stats=result["stats"],
     )
 
     return result

@@ -7,6 +7,8 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from config import COLMAP_QUALITY, COLMAP_USE_GPU, find_colmap_binary
+from .colmap_stats import inspect_sparse_model
+from .frame_selection.image_io import validate_image_directory
 from .utils import ensure_dir, extract_images_zip, run_command
 
 logger = logging.getLogger(__name__)
@@ -66,7 +68,7 @@ def run_colmap(
             raise RuntimeError(f"Images directory not found: {source_images}")
 
     # gsplat Parser expects data_dir/images and data_dir/sparse/0.
-    # Copy only image files so COLMAP never sees manifests, videos, or rejected frames.
+    # When frame selection already wrote into work_dir/images, reuse it in place.
     dataset_images = ensure_dir(work_dir / "images")
     if source_images.resolve() != dataset_images.resolve():
         if dataset_images.exists():
@@ -86,6 +88,29 @@ def run_colmap(
             raise RuntimeError(f"No selected images found for COLMAP in {source_images}")
         if on_log:
             on_log(f"Copied {copied} selected frames into COLMAP image directory")
+    else:
+        if on_log:
+            on_log(f"Using pre-validated COLMAP images directory in place: {dataset_images.resolve()}")
+
+    validation = validate_image_directory(dataset_images)
+    input_count = int(validation["valid_count"])
+    if input_count == 0:
+        raise RuntimeError(
+            f"COLMAP input directory has no valid images: {dataset_images.resolve()}"
+        )
+    if validation["invalid"]:
+        raise RuntimeError(
+            f"COLMAP input contains {len(validation['invalid'])} invalid image(s): "
+            f"{validation['invalid'][:5]}"
+        )
+
+    abs_images = str(dataset_images.resolve())
+    logger.info(
+        "[COLMAP:init] Consuming %d validated images from %s",
+        input_count, abs_images,
+    )
+    if on_log:
+        on_log(f"[COLMAP:init] image_path={abs_images} valid_images={input_count}")
 
     preset = _colmap_quality()
 
@@ -105,7 +130,7 @@ def run_colmap(
                 "--database_path",
                 str(database_path),
                 "--image_path",
-                str(dataset_images),
+                abs_images,
                 "--ImageReader.single_camera",
                 "1",
                 "--FeatureExtraction.max_image_size",
@@ -129,7 +154,7 @@ def run_colmap(
                     "--database_path",
                     str(database_path),
                     "--image_path",
-                    str(dataset_images),
+                    abs_images,
                     "--ImageReader.single_camera",
                     "1",
                     "--FeatureExtraction.max_image_size",
@@ -184,7 +209,7 @@ def run_colmap(
             "--database_path",
             str(database_path),
             "--image_path",
-            str(dataset_images),
+            abs_images,
             "--output_path",
             str(sparse_dir),
             "--GlobalMapper.multiple_models",
@@ -201,5 +226,24 @@ def run_colmap(
         else:
             raise RuntimeError("COLMAP mapper did not produce sparse/0 reconstruction")
 
-    report("undistort", 30, f"Sparse reconstruction ready at {sparse_model}")
+    model_stats = inspect_sparse_model(sparse_model)
+    registered = model_stats.get("registered_images")
+    points = model_stats.get("num_points3d")
+    summary = (
+        f"Sparse reconstruction ready at {sparse_model} "
+        f"| input_images={input_count} "
+        f"| registered_images={registered if registered is not None else 'unknown'} "
+        f"| points3D={points if points is not None else 'unknown'}"
+    )
+    report("undistort", 30, summary)
+
+    if registered is not None and registered <= 0:
+        raise RuntimeError(
+            f"COLMAP registered 0 images (input_images={input_count}); refusing to continue to gsplat"
+        )
+    if registered is not None and input_count > 0 and registered < max(2, int(input_count * 0.1)):
+        raise RuntimeError(
+            f"COLMAP registered only {registered}/{input_count} images; reconstruction appears incomplete"
+        )
+
     return work_dir

@@ -16,10 +16,13 @@ from typing import Any
 from urllib import request as urllib_request
 
 from config import HOST, PORT, USE_MOCK, WORK_DIR, validate_pipeline_environment
+from pipeline.frame_selection.progress import ProgressThrottler
 from train import run_pipeline
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
+
+_TERMINAL_STATUSES = frozenset({"FAILED", "COMPLETED"})
 
 
 def send_callback(callback_url: str, payload: dict) -> None:
@@ -46,12 +49,28 @@ def process_job(
 ) -> None:
     """Run training pipeline in a background thread."""
 
+    throttler = ProgressThrottler(min_interval=2.0, min_pct_delta=1.0)
+    last_status: dict[str, str | None] = {"value": None}
+
     def on_status(
         status: str,
         log_msg: str,
         progress: int,
         **kwargs: Any,
     ) -> None:
+        status_changed = status != last_status["value"]
+        force = (
+            status in _TERMINAL_STATUSES
+            or status_changed
+            or bool(kwargs.get("error"))
+            or bool(kwargs.get("splat_key"))
+            or bool(kwargs.get("collision_key"))
+            or progress >= 100
+        )
+        if not throttler.should_emit(float(progress), force=force):
+            return
+
+        last_status["value"] = status
         payload: dict[str, Any] = {
             "job_id": job_id,
             "status": status,

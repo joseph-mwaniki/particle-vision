@@ -1,12 +1,35 @@
-import { appendJobLog, getJob, prisma, updateJob } from "../db";
+import { getJob, prisma, updateJob } from "../db";
 import { headObject, presignDownload, presignObjectUpload } from "./objectStorage";
 import { dispatchTrainingJob } from "./workerClient";
 import { Job, WorkerCallbackPayload } from "../types/job";
 
-
-
-
 const BACKEND_PUBLIC_URL = process.env.BACKEND_PUBLIC_URL || "http://localhost:3001";
+const LOGS_MAX_BYTES = 32 * 1024;
+
+function appendCappedLog(existing: string | null | undefined, message: string): string {
+  const line = `[${new Date().toISOString()}] ${message}`;
+  const combined = existing ? `${existing}\n${line}` : line;
+  const byteLength = Buffer.byteLength(combined, "utf8");
+  if (byteLength <= LOGS_MAX_BYTES) {
+    return combined;
+  }
+  // Keep the trailing window; drop a partial leading line if we cut mid-line.
+  const buf = Buffer.from(combined, "utf8");
+  const sliced = buf.subarray(byteLength - LOGS_MAX_BYTES).toString("utf8");
+  const firstNewline = sliced.indexOf("\n");
+  return firstNewline >= 0 ? sliced.slice(firstNewline + 1) : sliced;
+}
+
+function shouldPersistLog(job: Job, payload: WorkerCallbackPayload): boolean {
+  if (payload.status === "FAILED" || payload.status === "COMPLETED") {
+    return true;
+  }
+  if (payload.error) {
+    return true;
+  }
+  // Persist only when the job stage changes, not every progress tick.
+  return payload.status !== job.status;
+}
 
 export async function startTrainingJob(jobId: string): Promise<void> {
   const job = await getJob(jobId);
@@ -50,7 +73,7 @@ export async function startTrainingJob(jobId: string): Promise<void> {
   await updateJob(jobId, {
     status: "QUEUED",
     progress: 0,
-    logs: `${job.logs || ""}\n[${new Date().toISOString()}] Dispatching training request to GPU worker...`,
+    logs: appendCappedLog(job.logs, "Dispatching training request to GPU worker..."),
   });
   await dispatchTrainingJob({
     job_id: jobId,
@@ -61,7 +84,6 @@ export async function startTrainingJob(jobId: string): Promise<void> {
     output_uploads: outputUploads,
     callback_url: callbackUrl,
   });
-
 }
 
 export async function handleWorkerCallback(
@@ -72,18 +94,32 @@ export async function handleWorkerCallback(
     throw new Error(`Job not found: ${payload.job_id}`);
   }
 
-  if (payload.log) {
-    await appendJobLog(payload.job_id, payload.log);
+  const updatePayload: Partial<Job> = {
+    status: payload.status,
+    progress: payload.progress,
+  };
+
+  if (payload.frame_stats) {
+    updatePayload.frameStats = payload.frame_stats;
+  }
+
+  const logMessages: string[] = [];
+  if (shouldPersistLog(job, payload) && payload.log) {
+    logMessages.push(payload.log);
+  }
+  if (payload.status === "FAILED" && payload.error) {
+    logMessages.push(`ERROR: ${payload.error}`);
   }
 
   if (payload.status === "FAILED") {
-    await updateJob(payload.job_id, {
-      status: "FAILED",
-      progress: payload.progress,
-    });
-    if (payload.error) {
-      await appendJobLog(payload.job_id, `ERROR: ${payload.error}`);
+    let logs = job.logs;
+    for (const message of logMessages) {
+      logs = appendCappedLog(logs, message);
     }
+    if (logMessages.length > 0) {
+      updatePayload.logs = logs;
+    }
+    await updateJob(payload.job_id, updatePayload);
     return;
   }
 
@@ -105,23 +141,30 @@ export async function handleWorkerCallback(
       if (!collision.ContentLength) throw new Error("Worker collision output is missing or empty in object storage");
     }
 
-    await updateJob(payload.job_id, {
-      status: "COMPLETED",
-      progress: 100,
-      splatPath: payload.splat_key || null,
-      collisionPath: payload.collision_key || null,
-    });
-    if (!payload.splat_key) await appendJobLog(payload.job_id, "No splat object was uploaded by the worker.");
+    updatePayload.progress = 100;
+    updatePayload.splatPath = payload.splat_key || null;
+    updatePayload.collisionPath = payload.collision_key || null;
+    if (!payload.splat_key) {
+      logMessages.push("No splat object was uploaded by the worker.");
+    }
+    let logs = job.logs;
+    for (const message of logMessages) {
+      logs = appendCappedLog(logs, message);
+    }
+    if (logMessages.length > 0) {
+      updatePayload.logs = logs;
+    }
+    await updateJob(payload.job_id, updatePayload);
     return;
   }
 
-  const updatePayload: Partial<Job> = {
-    status: payload.status,
-    progress: payload.progress,
-  };
-  if (payload.frame_stats) {
-    updatePayload.frameStats = payload.frame_stats;
+  if (logMessages.length > 0) {
+    let logs = job.logs;
+    for (const message of logMessages) {
+      logs = appendCappedLog(logs, message);
+    }
+    updatePayload.logs = logs;
   }
+
   await updateJob(payload.job_id, updatePayload);
 }
-

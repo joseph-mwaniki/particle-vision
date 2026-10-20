@@ -24,7 +24,8 @@ class FrameMetrics:
     exposure_label: str = "unknown"
     selected: bool = False
     in_window: int = 0
-    image: Any = None
+    image: Any = None  # transient only; prefer image_path for full-resolution pixels
+    image_path: str | None = None
     thumbnail: Any = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
