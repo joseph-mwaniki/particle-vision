@@ -141,11 +141,16 @@ def extract_frames_from_video(
         if on_log:
             on_log(f"[frame_selection] {warning}")
 
+    stats = result.get("stats", {})
     metadata = {
         "source_video": video_path.name,
         "job_id": result.get("job_id"),
         "frame_count": valid_on_disk,
-        "stats": result.get("stats", {}),
+        "sampling_stride": stats.get("sampling_stride"),
+        "retention_percentage": stats.get("retention_percentage"),
+        "continuity_verifiable": stats.get("continuity_verifiable"),
+        "continuity_guaranteed": stats.get("continuity_guaranteed"),
+        "stats": stats,
         "warnings": result.get("warnings", []),
         "ordered_frames": [p.name for p in frame_files],
         "colmap_images_dir": str(colmap_images.resolve()),

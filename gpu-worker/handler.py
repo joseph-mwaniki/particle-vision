@@ -104,8 +104,8 @@ def process_job(
             0,
             error=str(exc),
         )
-    finally:
-        shutil.rmtree(WORK_DIR / "jobs" / job_id, ignore_errors=True)
+    # finally:
+    #     shutil.rmtree(WORK_DIR / "jobs" / job_id, ignore_errors=True)
 
 
 def runpod_handler(event: dict) -> dict:
