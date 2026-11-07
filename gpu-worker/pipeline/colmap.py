@@ -6,7 +6,13 @@ import shutil
 from pathlib import Path
 from typing import Callable, Optional
 
-from config import COLMAP_QUALITY, COLMAP_USE_GPU, find_colmap_binary
+from config import (
+    COLMAP_MATCHER,
+    COLMAP_QUALITY,
+    COLMAP_SEQUENTIAL_OVERLAP,
+    COLMAP_USE_GPU,
+    find_colmap_binary,
+)
 from .colmap_stats import inspect_sparse_model
 from .frame_selection.image_io import validate_image_directory
 from .utils import ensure_dir, extract_images_zip, run_command
@@ -26,6 +32,37 @@ _QUALITY_PRESETS = {
 
 def _colmap_quality() -> dict:
     return _QUALITY_PRESETS.get(COLMAP_QUALITY, _QUALITY_PRESETS["medium"])
+
+
+def _matcher_command(colmap_bin: str, database_path: Path) -> list[str]:
+    matcher = COLMAP_MATCHER.lower()
+    if matcher == "exhaustive":
+        return [
+            colmap_bin,
+            "exhaustive_matcher",
+            "--database_path",
+            str(database_path),
+            "--FeatureMatching.use_gpu",
+            str(COLMAP_USE_GPU),
+        ]
+    if matcher == "sequential":
+        return [
+            colmap_bin,
+            "sequential_matcher",
+            "--database_path",
+            str(database_path),
+            "--SequentialMatching.overlap",
+            str(COLMAP_SEQUENTIAL_OVERLAP),
+            "--SequentialMatching.quadratic_overlap",
+            "1",
+            "--SequentialMatching.loop_detection",
+            "0",
+            "--FeatureMatching.use_gpu",
+            str(COLMAP_USE_GPU),
+        ]
+    if matcher == "vocab_tree":
+        raise RuntimeError("vocab_tree requires a tree file and is not configured.")
+    raise RuntimeError(f"Unsupported COLMAP_MATCHER: {COLMAP_MATCHER}")
 
 
 def _wrap_xvfb_if_needed(cmd: list[str]) -> list[str]:
@@ -169,35 +206,17 @@ def run_colmap(
         else:
             raise
 
-    report("match_features", 20, f"Running exhaustive feature matching (GPU={COLMAP_USE_GPU})")
+    report("match_features", 20, f"Running {COLMAP_MATCHER} feature matching (GPU={COLMAP_USE_GPU})")
     try:
-        run_command(
-            _wrap_xvfb_if_needed([
-                colmap_bin,
-                "exhaustive_matcher",
-                "--database_path",
-                str(database_path),
-                "--FeatureMatching.use_gpu",
-                str(COLMAP_USE_GPU),
-            ]),
-            on_log=on_log,
-        )
+        run_command(_wrap_xvfb_if_needed(_matcher_command(colmap_bin, database_path)), on_log=on_log)
     except Exception as exc:
         if COLMAP_USE_GPU == "1":
             logger.warning("GPU feature matching failed (%s). Falling back to CPU matching.", exc)
             if on_log:
                 on_log(f"Warning: GPU matching failed ({exc}). Retrying on CPU...")
-            run_command(
-                [
-                    colmap_bin,
-                    "exhaustive_matcher",
-                    "--database_path",
-                    str(database_path),
-                    "--FeatureMatching.use_gpu",
-                    "0",
-                ],
-                on_log=on_log,
-            )
+            cpu_cmd = _matcher_command(colmap_bin, database_path)
+            cpu_cmd[cpu_cmd.index("--FeatureMatching.use_gpu") + 1] = "0"
+            run_command(cpu_cmd, on_log=on_log)
         else:
             raise
 

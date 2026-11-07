@@ -25,7 +25,10 @@ GSPLAT_STEPS = int(os.getenv("GSPLAT_STEPS", "7000"))
 COLMAP_QUALITY = os.getenv("COLMAP_QUALITY", "medium")
 COLMAP_BINARY = os.getenv("COLMAP_BINARY", "colmap")
 COLMAP_USE_GPU = os.getenv("COLMAP_USE_GPU", "1")
-COLMAP_MATCHER = os.getenv("COLMAP_MATCHER", "exhaustive")
+COLMAP_MATCHER = os.getenv("COLMAP_MATCHER", "sequential")
+# Sequential matcher: compare each frame against this many neighbors on each side
+COLMAP_SEQUENTIAL_OVERLAP = int(os.getenv("COLMAP_SEQUENTIAL_OVERLAP", "10"))
+COLMAP_SEQUENTIAL_QUADRATIC_OVERLAP = os.getenv("COLMAP_SEQUENTIAL_QUADRATIC_OVERLAP", "1")
 
 # gsplat source path (vendored in monorepo, mounted in Docker)
 GSPLAT_REPO_PATH = Path(os.getenv("GSPLAT_REPO_PATH", str(Path(__file__).resolve().parent.parent / "gsplat")))
