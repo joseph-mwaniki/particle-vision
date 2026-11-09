@@ -184,9 +184,9 @@ ENV TORCH_CUDA_ARCH_LIST="8.0;8.6;8.9;9.0"
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
-RUN python3.10 -m pip install "setuptools==69.5.1" wheel
+RUN python3.10 -m pip install ninja
 
-RUN python3.10 -m pip install -e /workspace/gsplat --no-build-isolation -v 2>&1 | tee /tmp/gsplat-install.log
+RUN python3.10 -m pip install -e /workspace/gsplat -v 2>&1 | tee /tmp/gsplat-install.log
 
 RUN python3.10 -m pip install -e /workspace/gsplat/libs/scene -v 2>&1 | tee /tmp/gsplat-scene-install.log
 
