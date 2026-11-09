@@ -9,6 +9,7 @@ import json
 import logging
 import re
 import shutil
+import sys
 import threading
 import traceback
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -19,7 +20,12 @@ from config import HOST, PORT, USE_MOCK, WORK_DIR, validate_pipeline_environment
 from pipeline.frame_selection.progress import ProgressThrottler
 from train import run_pipeline
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    stream=sys.stdout,
+    force=True,
+)
 logger = logging.getLogger(__name__)
 
 _TERMINAL_STATUSES = frozenset({"FAILED", "COMPLETED"})
@@ -130,6 +136,18 @@ def runpod_handler(event: dict) -> dict:
 
     if not isinstance(job_id, str) or not re.fullmatch(r"job_[a-z0-9]+", job_id):
         return {"status": "rejected", "error": "job_id format is invalid"}
+    env_checks = validate_pipeline_environment()
+    logger.info(
+        "Job %s env: %s",
+        job_id,
+        {key: ok for key, (ok, _msg) in env_checks.items()},
+    )
+    if not env_checks["gsplat_cuda"][0]:
+        logger.error("Job %s rejected: %s", job_id, env_checks["gsplat_cuda"][1])
+        return {
+            "status": "rejected",
+            "error": f"gsplat CUDA backend unavailable: {env_checks['gsplat_cuda'][1]}",
+        }
     if not isinstance(source_files, list) or not source_files or not isinstance(output_uploads, dict) or not isinstance(callback_url, str) or not callback_url:
         return {"status": "rejected", "error": "Missing required fields: job_id, source_files, output_uploads, callback_url"}
     if any(not isinstance(item, dict) or not isinstance(item.get("download_url"), str) or not item.get("download_url") or not isinstance(item.get("original_name"), str) or not item.get("original_name") for item in source_files):
@@ -197,6 +215,18 @@ class WorkerHTTPHandler(BaseHTTPRequestHandler):
 
 def main() -> None:
     mode = "mock" if USE_MOCK else "real (gsplat)"
+    checks = validate_pipeline_environment()
+    logger.info("Environment report at startup:")
+    for name, (ok, msg) in checks.items():
+        logger.info("  %-14s %s  %s", name, "OK  " if ok else "FAIL", msg)
+    try:
+        from config import require_pipeline_environment
+
+        require_pipeline_environment()
+        logger.info("Pipeline environment: READY (real pipeline will run on GPU)")
+    except RuntimeError as exc:
+        logger.error("Pipeline environment: NOT READY — real jobs will fail fast. %s", exc)
+
     server = HTTPServer((HOST, PORT), WorkerHTTPHandler)
     logger.info("GPU worker listening on http://%s:%d [%s mode]", HOST, PORT, mode)
     logger.info("  GET  /health")
