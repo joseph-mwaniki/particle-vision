@@ -14,7 +14,7 @@ ARG TORCH_CUDA_VARIANT=cu130
 
 WORKDIR /workspace
 
-ENV VERBOSE=1
+#ENV VERBOSE=1
 ENV DEBUG=1
 ENV PYTHONUNBUFFERED=1
 
@@ -177,6 +177,7 @@ COPY gsplat/ ./gsplat/
 # ------------------------------------------------------------
 
 ENV TORCH_CUDA_ARCH_LIST="8.0;8.6;8.9;9.0"
+ENV NVCC_FLAGS="-diag-suppress 3189"
 
 # ------------------------------------------------------------
 # Install local gsplat engine
