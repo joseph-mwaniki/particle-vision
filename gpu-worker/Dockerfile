@@ -15,7 +15,7 @@ ARG TORCH_CUDA_VARIANT=cu130
 WORKDIR /workspace
 
 #ENV VERBOSE=1
-ENV DEBUG=1
+ENV DEBUG=0
 ENV PYTHONUNBUFFERED=1
 
 # ------------------------------------------------------------
