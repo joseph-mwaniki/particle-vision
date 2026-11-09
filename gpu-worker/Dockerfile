@@ -14,6 +14,10 @@ ARG TORCH_CUDA_VARIANT=cu130
 
 WORKDIR /workspace
 
+ENV VERBOSE=1
+ENV DEBUG=1
+ENV PYTHONUNBUFFERED=1
+
 # ------------------------------------------------------------
 # CUDA environment
 # ------------------------------------------------------------
@@ -178,18 +182,34 @@ ENV TORCH_CUDA_ARCH_LIST="8.0;8.6;8.9;9.0"
 # Install local gsplat engine
 # ------------------------------------------------------------
 
-RUN python3.10 -m pip install -e /workspace/gsplat
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
-RUN python3.10 -m pip install -e /workspace/gsplat/libs/scene
+RUN python3.10 -m pip install -e /workspace/gsplat -v 2>&1 | tee /tmp/gsplat-install.log
 
-RUN python3.10 -m pip install -e /workspace/gsplat/libs/stage
+RUN python3.10 -m pip install -e /workspace/gsplat/libs/scene -v 2>&1 | tee /tmp/gsplat-scene-install.log
+
+RUN python3.10 -m pip install -e /workspace/gsplat/libs/stage -v 2>&1 | tee /tmp/gsplat-stage-install.log
 
 # ------------------------------------------------------------
 # Precompile gsplat CUDA extension
 # ------------------------------------------------------------
 
-RUN python3.10 -c \
-    "from gsplat.cuda._backend import _C; print('gsplat CUDA extension pre-compiled successfully!')"
+RUN python3.10 -c "import sys; \
+from gsplat.cuda._backend import _C, cuda_toolkit_available; \
+toolkit = cuda_toolkit_available(); \
+print('cuda_toolkit_available:', toolkit); \
+print('_C is None:', _C is None); \
+sys.exit('FATAL: gsplat CUDA extension did not load during build (toolkit=%s)' % toolkit) if _C is None else print('gsplat CUDA extension pre-compiled successfully!')" \
+2>&1 | tee /tmp/gsplat-precompile.log
+
+RUN python3.10 -c "import torch, os, sys; \
+print('python:', sys.version); \
+print('torch:', torch.__version__); \
+print('torch.version.cuda:', torch.version.cuda); \
+print('torch.cuda.is_available:', torch.cuda.is_available()); \
+print('TORCH_CUDA_ARCH_LIST:', os.environ.get('TORCH_CUDA_ARCH_LIST')); \
+print('CUDA_HOME:', os.environ.get('CUDA_HOME'))" \
+> /workspace/build-info.txt 2>&1 || true
 
 # ------------------------------------------------------------
 # Worker workspace
@@ -223,6 +243,9 @@ HEALTHCHECK \
     --timeout=5s \
     --start-period=10s \
     CMD curl -f http://localhost:8080/health || exit 1
+
+RUN mkdir -p /workspace/logs && \
+    cp /tmp/gsplat-*.log /workspace/logs/ 2>/dev/null || true
 
 # ------------------------------------------------------------
 # Start worker
