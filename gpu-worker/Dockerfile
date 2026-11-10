@@ -229,6 +229,8 @@ ENV PORT=8080
 ENV WORK_DIR=/workspace/data
 ENV GSPLAT_REPO_PATH=/workspace/gsplat
 ENV PYTHONPATH=/workspace/gsplat
+# Clear LD_LIBRARY_PATH so PyTorch uses its bundled cuBLAS instead of the system CUDA
+ENV LD_LIBRARY_PATH=""
 ENV USE_MOCK=false
 ENV QT_QPA_PLATFORM=offscreen
 
