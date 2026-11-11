@@ -58,11 +58,15 @@ def _process_frame_chunk(args: tuple) -> list[dict[str, Any]]:
     Full-resolution pixels stay on disk. Workers return paths + small thumbnails
     so ProcessPoolExecutor results do not ferry multi-megabyte arrays.
     """
-    if len(args) == 6:
+    if len(args) == 7:
+        video_path_str, start_frame, count, temp_dir_str, jpeg_quality, stride, include_thumbnail = args
+    elif len(args) == 6:
         video_path_str, start_frame, count, temp_dir_str, jpeg_quality, stride = args
+        include_thumbnail = True
     else:
         video_path_str, start_frame, count, temp_dir_str, jpeg_quality = args
         stride = 1
+        include_thumbnail = True
 
     effective_stride = max(1, int(stride))
     temp_dir = Path(temp_dir_str)
@@ -96,7 +100,11 @@ def _process_frame_chunk(args: tuple) -> list[dict[str, Any]]:
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
             sharpness = variance_of_laplacian(gray)
             brightness, dark_ratio, bright_ratio, exposure_label = analyze_exposure(frame)
-            thumbnail_arr = prepare_similarity_frame(gray, (64, 64))
+            thumbnail_arr = (
+                prepare_similarity_frame(gray, (64, 64))
+                if include_thumbnail
+                else None
+            )
 
             image_path = temp_dir / f"frame_{frame_index:06d}.jpg"
             write_jpeg(image_path, frame, quality=jpeg_quality)
@@ -106,7 +114,7 @@ def _process_frame_chunk(args: tuple) -> list[dict[str, Any]]:
                     f"Failed to stage frame {frame_index} at {image_path}: {reason}"
                 )
 
-            results.append({
+            result = {
                 "frame_index": frame_index,
                 "timestamp": float(timestamp),
                 "sharpness": float(sharpness),
@@ -117,10 +125,14 @@ def _process_frame_chunk(args: tuple) -> list[dict[str, Any]]:
                 "image_path": str(image_path),
                 "width": dims[0] if dims else 0,
                 "height": dims[1] if dims else 0,
-                "thumbnail_bytes": thumbnail_arr.tobytes(),
-                "thumbnail_shape": thumbnail_arr.shape,
-                "thumbnail_dtype": str(thumbnail_arr.dtype),
-            })
+            }
+            if thumbnail_arr is not None:
+                result.update({
+                    "thumbnail_bytes": thumbnail_arr.tobytes(),
+                    "thumbnail_shape": thumbnail_arr.shape,
+                    "thumbnail_dtype": str(thumbnail_arr.dtype),
+                })
+            results.append(result)
             del frame, gray
     finally:
         cap.release()
@@ -131,9 +143,11 @@ def _reconstruct_disk_items(raw_items: list[dict[str, Any]]) -> list[dict[str, A
     """Rebuild lightweight metadata + thumbnails from worker results (no full frames)."""
     items: list[dict[str, Any]] = []
     for raw in raw_items:
-        thumbnail = np.frombuffer(
-            raw["thumbnail_bytes"], dtype=np.dtype(raw["thumbnail_dtype"])
-        ).reshape(raw["thumbnail_shape"]).copy()
+        thumbnail = None
+        if "thumbnail_bytes" in raw:
+            thumbnail = np.frombuffer(
+                raw["thumbnail_bytes"], dtype=np.dtype(raw["thumbnail_dtype"])
+            ).reshape(raw["thumbnail_shape"]).copy()
         items.append({
             "frame_index": raw["frame_index"],
             "timestamp": raw["timestamp"],
@@ -416,6 +430,17 @@ def select_frames(
     colmap_images_dir: Path | None = None,
 ) -> dict[str, Any]:
     cfg = config or SelectorConfig()
+    if cfg.experimental_uniform_sampling and cfg.experimental_interval_seconds <= 0:
+        raise ValueError("experimental_interval_seconds must be positive")
+    if cfg.experimental_uniform_sampling and cfg.experimental_start_seconds < 0:
+        raise ValueError("experimental_start_seconds cannot be negative")
+    if cfg.radical_uniform_sampling and cfg.radical_interval_seconds <= 0:
+        raise ValueError("radical_interval_seconds must be positive")
+    if cfg.radical_uniform_sampling and cfg.radical_start_seconds < 0:
+        raise ValueError("radical_start_seconds cannot be negative")
+    uniform_sampling = (
+        cfg.radical_uniform_sampling or cfg.experimental_uniform_sampling
+    )
     export_id = job_id or uuid.uuid4().hex
     metadata = get_video_metadata(video_path)
     total_frames = int(metadata["frame_count"])
@@ -438,7 +463,12 @@ def select_frames(
 
     sampling_stride = max(1, getattr(cfg, "sampling_stride", 5))
     min_final = getattr(cfg, "min_final_selection", 8)
-    if total_frames > 0 and min_final > 1 and total_frames < min_final * sampling_stride:
+    if (
+        not cfg.radical_uniform_sampling
+        and total_frames > 0
+        and min_final > 1
+        and total_frames < min_final * sampling_stride
+    ):
         sampling_stride = max(1, total_frames // min_final)
     max_frame_gap = max(1, getattr(cfg, "max_frame_gap", 25))
     expected_candidates = len(range(0, max_frames, sampling_stride))
@@ -494,7 +524,15 @@ def select_frames(
         raw_chunk = max(10, (max_frames + workers - 1) // workers)
         chunk_size = max(sampling_stride * 2, ((raw_chunk + sampling_stride - 1) // sampling_stride) * sampling_stride)
         chunks = [
-            (str(video_path), start_idx, min(chunk_size, max_frames - start_idx), str(temp_frames_dir), JPEG_QUALITY, sampling_stride)
+            (
+                str(video_path),
+                start_idx,
+                min(chunk_size, max_frames - start_idx),
+                str(temp_frames_dir),
+                JPEG_QUALITY,
+                sampling_stride,
+                not uniform_sampling,
+            )
             for start_idx in range(0, max_frames, chunk_size)
         ]
         workers_used = workers
@@ -553,7 +591,11 @@ def select_frames(
                 gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
                 sharpness = variance_of_laplacian(gray)
                 brightness, dark_ratio, bright_ratio, exposure_label = analyze_exposure(frame)
-                thumbnail = prepare_similarity_frame(gray, (64, 64))
+                thumbnail = (
+                    None
+                    if uniform_sampling
+                    else prepare_similarity_frame(gray, (64, 64))
+                )
                 image_path = temp_frames_dir / f"frame_{frame_index:06d}.jpg"
                 write_jpeg(image_path, frame)
                 ok, reason, _dims = validate_image_file(image_path)
@@ -688,6 +730,27 @@ def select_frames(
             )
             continue
 
+        if uniform_sampling and quality_label == "blurry":
+            candidate.status = "rejected"
+            candidate.reason = "BLURRY"
+            candidate.selected = False
+            rejected_frames.append(candidate)
+            progress = 13 + int(37 * processed_frames / max(len(analyzed_items), 1))
+            _progress_callback(
+                progress_callback, progress,
+                f"[frame_selection:quality] Frame {processed_frames}/{len(analyzed_items)} "
+                "— BLURRY REJECTED",
+                stats={
+                    "analyzed_frames": processed_frames,
+                    "blurry_frames": blurry_count,
+                    "exposure_rejected": exposure_rejected_count,
+                    "redundant_frames": redundant_rejections,
+                    "selected_frames": 0,
+                },
+                selected_count=0,
+            )
+            continue
+
         candidate.sharpness_score = min(1.0, max(0.0, candidate.sharpness / max(effective_blur * 1.5, 1.0)))
         candidate.exposure_score = 1.0
         candidate.viewpoint_change_score = 0.25
@@ -736,9 +799,10 @@ def select_frames(
     # ------------------------------------------------------------------ #
     similarity_timer = StageTimer("similarity")
     windowed_candidates: dict[int, list[FrameMetrics]] = {}
-    for candidate in candidate_frames:
-        window_id = int(candidate.timestamp // cfg.window_seconds)
-        windowed_candidates.setdefault(window_id, []).append(candidate)
+    if not uniform_sampling:
+        for candidate in candidate_frames:
+            window_id = int(candidate.timestamp // cfg.window_seconds)
+            windowed_candidates.setdefault(window_id, []).append(candidate)
 
     selected_frames: list[FrameMetrics] = []
     selection_processed = 0
@@ -873,6 +937,61 @@ def select_frames(
         {frame.frame_index: frame for frame in selected_frames}.values(),
         key=lambda item: item.timestamp,
     )
+    warnings: list[str] = []
+    if cfg.radical_uniform_sampling:
+        warnings.append(
+            "Radical uniform sampling was used "
+            f"(every {cfg.radical_interval_seconds:g}s starting at "
+            f"{cfg.radical_start_seconds:g}s)."
+        )
+        last_kept_timestamp = (
+            cfg.radical_start_seconds - cfg.radical_interval_seconds
+        )
+        for candidate in candidate_frames:
+            if (
+                candidate.timestamp >= cfg.radical_start_seconds
+                and candidate.timestamp - last_kept_timestamp
+                >= cfg.radical_interval_seconds
+            ):
+                candidate.status = "selected"
+                candidate.selected = True
+                candidate.reason = "Radical uniform sampling"
+                selected_frames.append(candidate)
+                last_kept_timestamp = candidate.timestamp
+        _progress_callback(
+            progress_callback, 75,
+            f"[frame_selection:similarity] Applying radical "
+            f"{cfg.radical_interval_seconds:g}s uniform downsampling",
+            selected_count=len(selected_frames),
+        )
+    elif cfg.experimental_uniform_sampling:
+        warnings.append(
+            "Experimental uniform sampling was used "
+            f"(every {cfg.experimental_interval_seconds:g}s starting at "
+            f"{cfg.experimental_start_seconds:g}s)."
+        )
+        tolerance = 0.05
+        next_target = cfg.experimental_start_seconds
+        for candidate in sorted(candidate_frames, key=lambda item: item.timestamp):
+            if candidate.timestamp < next_target - tolerance:
+                continue
+            while candidate.timestamp > next_target + tolerance:
+                next_target += cfg.experimental_interval_seconds
+            if abs(candidate.timestamp - next_target) <= tolerance:
+                candidate.status = "selected"
+                candidate.selected = True
+                candidate.reason = "Experimental uniform sampling"
+                selected_frames.append(candidate)
+                next_target += cfg.experimental_interval_seconds
+        _progress_callback(
+            progress_callback, 75,
+            "[frame_selection:similarity] Experimental uniform sampling complete",
+            selected_count=len(selected_frames),
+        )
+    selected_frames = sorted(
+        {frame.frame_index: frame for frame in selected_frames}.values(),
+        key=lambda item: item.timestamp,
+    )
     stage_timings["similarity_s"] = similarity_timer.stop()
 
     logger.info(
@@ -897,11 +1016,13 @@ def select_frames(
     # STAGE 5: Continuity enforcement & coverage gap filling              #
     # ------------------------------------------------------------------ #
     coverage_timer = StageTimer("coverage")
-    warnings: list[str] = []
     restored_frames: list[FrameMetrics] = []
     unrepairable_gaps: list[dict[str, Any]] = []
 
-    if getattr(cfg, "continuity_aware", True):
+    if (
+        getattr(cfg, "continuity_aware", True)
+        and not uniform_sampling
+    ):
         logger.info(
             "[frame_selection:continuity] Enforcing continuity (max source-frame gap=%d)",
             max_frame_gap,
@@ -931,7 +1052,7 @@ def select_frames(
             f"{len(selected_frames)} total selected",
             selected_count=len(selected_frames),
         )
-    else:
+    elif not uniform_sampling:
         warnings.extend(find_large_gaps(selected_frames, cfg.coverage_gap_seconds))
         coverage_total = max(len(selected_frames) - 1, 1)
         gaps_filled = 0
@@ -986,7 +1107,11 @@ def select_frames(
     # STAGE 6: Safety net — guarantee COLMAP minimum frame count         #
     # ------------------------------------------------------------------ #
     safety_net_added_frames: list[dict[str, Any]] = []
-    if len(selected_frames) < cfg.min_final_selection and candidate_frames:
+    if (
+        not uniform_sampling
+        and len(selected_frames) < cfg.min_final_selection
+        and candidate_frames
+    ):
         logger.warning(
             "[frame_selection:safety_net] Only %d frames selected (minimum=%d) — applying uniform coverage safety net",
             len(selected_frames), cfg.min_final_selection,
@@ -1023,11 +1148,17 @@ def select_frames(
             len(safety_net_added_frames), len(selected_frames),
         )
 
-    if len(selected_frames) < cfg.min_final_selection:
+    if (
+        not cfg.radical_uniform_sampling
+        and len(selected_frames) < cfg.min_final_selection
+    ):
         warnings.append(
             f"Only {len(selected_frames)} frames survived selection. This may be insufficient for reliable reconstruction."
         )
-    if len(selected_frames) > max(1, int(total_frames * 0.9)):
+    if (
+        not uniform_sampling
+        and len(selected_frames) > max(1, int(total_frames * 0.9))
+    ):
         warnings.append(
             "Very little redundancy was removed. The input may contain substantial camera movement or weak similarity thresholds."
         )
@@ -1267,6 +1398,12 @@ def select_frames(
             "total_frames": total_frames,
             "total_source_frames": total_frames,
             "sampling_stride": sampling_stride,
+            "experimental_uniform_sampling": cfg.experimental_uniform_sampling,
+            "experimental_interval_seconds": cfg.experimental_interval_seconds,
+            "experimental_start_seconds": cfg.experimental_start_seconds,
+            "radical_uniform_sampling": cfg.radical_uniform_sampling,
+            "radical_interval_seconds": cfg.radical_interval_seconds,
+            "radical_start_seconds": cfg.radical_start_seconds,
             "decoded_frames": processed_frames,
             "initial_candidates_count": initial_candidates_count,
             "sampled_candidates_count": initial_candidates_count,
@@ -1325,6 +1462,12 @@ def select_frames(
         "source_video": metadata["filename"],
         "total_source_frames": total_frames,
         "sampling_stride": sampling_stride,
+        "experimental_uniform_sampling": cfg.experimental_uniform_sampling,
+        "experimental_interval_seconds": cfg.experimental_interval_seconds,
+        "experimental_start_seconds": cfg.experimental_start_seconds,
+        "radical_uniform_sampling": cfg.radical_uniform_sampling,
+        "radical_interval_seconds": cfg.radical_interval_seconds,
+        "radical_start_seconds": cfg.radical_start_seconds,
         "decoded_frames": processed_frames,
         "initial_candidates_count": initial_candidates_count,
         "sampled_candidates_count": initial_candidates_count,

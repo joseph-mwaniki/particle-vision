@@ -5,6 +5,7 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+import pytest
 
 from pipeline.frame_selection import SelectorConfig, evaluate_temporal_bridge, select_frames
 from pipeline.frame_selection import frame_selector
@@ -512,6 +513,90 @@ def test_selector_config_compatibility():
     assert d["max_frame_gap"] == 25
     assert d["continuity_aware"] is True
     assert d["conservative_redundancy"] is True
+
+
+@pytest.mark.parametrize(
+    ("mode", "reason"),
+    [
+        ("experimental_uniform_sampling", "Experimental uniform sampling"),
+        ("radical_uniform_sampling", "Radical uniform sampling"),
+    ],
+)
+def test_uniform_sampling_modes_select_interval_without_safety_net(
+    tmp_path, monkeypatch, mode, reason
+):
+    video = tmp_path / f"{mode}.mp4"
+    _write_test_video(video, fps=10, seconds=2)
+    job_root = tmp_path / mode
+
+    def unexpected_similarity(*args, **kwargs):
+        raise AssertionError("uniform sampling must bypass similarity filtering")
+
+    monkeypatch.setattr(frame_selector, "compute_similarity", unexpected_similarity)
+    monkeypatch.setattr(frame_selector, "classify_blur", lambda *_args: "sharp")
+    monkeypatch.setattr(
+        frame_selector, "analyze_exposure", lambda *_args: (128.0, 0.0, 0.0, "good")
+    )
+    config = SelectorConfig(
+        sampling_stride=1,
+        max_frame_gap=1,
+        min_final_selection=8,
+        max_rejected_preview=0,
+        adaptive_blur=False,
+        **{
+            mode: True,
+            f"{mode.removesuffix('_uniform_sampling')}_interval_seconds": 0.5,
+        },
+    )
+    result = select_frames(
+        video,
+        config=config,
+        output_root=job_root / "frame_selection",
+        colmap_images_dir=job_root / "colmap" / "images",
+    )
+
+    assert [entry["original_frame"] for entry in result["selected_frames"]] == [
+        0, 5, 10, 15,
+    ]
+    assert all(entry["reason"] == reason for entry in result["selected_frames"])
+    assert result["stats"]["safety_net_added_count"] == 0
+    assert result["stats"]["continuity_guaranteed"] is False
+    assert result["stats"][mode] is True
+    assert any("uniform sampling was used" in warning.lower() for warning in result["warnings"])
+
+
+@pytest.mark.parametrize(
+    ("mode", "interval_key"),
+    [
+        ("experimental_uniform_sampling", "experimental_interval_seconds"),
+        ("radical_uniform_sampling", "radical_interval_seconds"),
+    ],
+)
+def test_uniform_sampling_rejects_nonpositive_interval(mode, interval_key):
+    config = SelectorConfig(**{mode: True, interval_key: 0})
+
+    with pytest.raises(ValueError, match=f"{interval_key} must be positive"):
+        select_frames("unused.mp4", config=config)
+
+
+def test_uniform_sampling_config_round_trip():
+    config = SelectorConfig(
+        experimental_uniform_sampling=True,
+        experimental_interval_seconds=0.75,
+        experimental_start_seconds=1.25,
+        radical_uniform_sampling=True,
+        radical_interval_seconds=2.5,
+        radical_start_seconds=0.5,
+    )
+
+    restored = SelectorConfig.from_dict(config.to_dict())
+
+    assert restored.experimental_uniform_sampling is True
+    assert restored.experimental_interval_seconds == 0.75
+    assert restored.experimental_start_seconds == 1.25
+    assert restored.radical_uniform_sampling is True
+    assert restored.radical_interval_seconds == 2.5
+    assert restored.radical_start_seconds == 0.5
 
 
 def test_redundancy_filtering_cannot_violate_maximum_gap(tmp_path):

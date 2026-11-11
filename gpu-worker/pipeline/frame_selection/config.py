@@ -34,6 +34,12 @@ class SelectorConfig:
     max_frame_gap: int = 25
     continuity_aware: bool = True
     conservative_redundancy: bool = True
+    experimental_uniform_sampling: bool = False
+    experimental_interval_seconds: float = 1.0
+    experimental_start_seconds: float = 0.0
+    radical_uniform_sampling: bool = False
+    radical_interval_seconds: float = 1.0
+    radical_start_seconds: float = 0.0
 
     def __init__(
         self,
@@ -65,6 +71,12 @@ class SelectorConfig:
         max_frame_gap: int = 25,
         continuity_aware: bool = True,
         conservative_redundancy: bool = True,
+        experimental_uniform_sampling: bool = False,
+        experimental_interval_seconds: float = 1.0,
+        experimental_start_seconds: float = 0.0,
+        radical_uniform_sampling: bool = False,
+        radical_interval_seconds: float = 1.0,
+        radical_start_seconds: float = 0.0,
         **kwargs: Any,
     ):
         if "sample_stride" in kwargs:
@@ -102,6 +114,12 @@ class SelectorConfig:
         self.max_frame_gap = max_frame_gap
         self.continuity_aware = continuity_aware
         self.conservative_redundancy = conservative_redundancy
+        self.experimental_uniform_sampling = experimental_uniform_sampling
+        self.experimental_interval_seconds = experimental_interval_seconds
+        self.experimental_start_seconds = experimental_start_seconds
+        self.radical_uniform_sampling = radical_uniform_sampling
+        self.radical_interval_seconds = radical_interval_seconds
+        self.radical_start_seconds = radical_start_seconds
 
     @property
     def sample_stride(self) -> int:
@@ -156,6 +174,12 @@ class SelectorConfig:
             "max_frame_gap": self.max_frame_gap,
             "continuity_aware": self.continuity_aware,
             "conservative_redundancy": self.conservative_redundancy,
+            "experimental_uniform_sampling": self.experimental_uniform_sampling,
+            "experimental_interval_seconds": self.experimental_interval_seconds,
+            "experimental_start_seconds": self.experimental_start_seconds,
+            "radical_uniform_sampling": self.radical_uniform_sampling,
+            "radical_interval_seconds": self.radical_interval_seconds,
+            "radical_start_seconds": self.radical_start_seconds,
         }
 
     @classmethod
