@@ -497,7 +497,11 @@ def select_frames(
     def progress_callback(progress: int, message: str, updates: dict[str, Any] | None = None) -> None:
         if original_progress_callback is None:
             return
-        force = progress >= 100 or is_stage_boundary_message(message)
+        force = (
+            progress >= 100
+            or is_stage_boundary_message(message)
+            or message.startswith("Applying radical ")
+        )
         if throttler.should_emit(float(progress), force=force):
             original_progress_callback(progress, message, updates or {})
 
@@ -808,15 +812,16 @@ def select_frames(
     selection_processed = 0
     selection_total = max(len(candidate_frames), 1)
 
-    logger.info(
-        "[frame_selection:similarity] Starting similarity filtering — %d candidates across %d windows",
-        len(candidate_frames), len(windowed_candidates),
-    )
-    _progress_callback(
-        progress_callback, 51,
-        f"[frame_selection:similarity] Filtering {len(candidate_frames)} candidates "
-        f"across {len(windowed_candidates)} time windows",
-    )
+    if not uniform_sampling:
+        logger.info(
+            "[frame_selection:similarity] Starting similarity filtering — %d candidates across %d windows",
+            len(candidate_frames), len(windowed_candidates),
+        )
+        _progress_callback(
+            progress_callback, 51,
+            f"[frame_selection:similarity] Filtering {len(candidate_frames)} candidates "
+            f"across {len(windowed_candidates)} time windows",
+        )
 
     def report_selection_progress(selected_count: int, reason: str = "") -> None:
         nonlocal selection_processed
@@ -960,8 +965,7 @@ def select_frames(
                 last_kept_timestamp = candidate.timestamp
         _progress_callback(
             progress_callback, 75,
-            f"[frame_selection:similarity] Applying radical "
-            f"{cfg.radical_interval_seconds:g}s uniform downsampling",
+            f"Applying radical {cfg.radical_interval_seconds:.1f}s uniform downsampling",
             selected_count=len(selected_frames),
         )
     elif cfg.experimental_uniform_sampling:
@@ -994,23 +998,29 @@ def select_frames(
     )
     stage_timings["similarity_s"] = similarity_timer.stop()
 
-    logger.info(
-        "[frame_selection:similarity] Similarity pass complete — %d selected, %d redundant rejections",
-        len(selected_frames), redundant_rejections,
-    )
-    _progress_callback(
-        progress_callback, 75,
-        f"[frame_selection:similarity] Similarity pass complete — {len(selected_frames)} frames selected "
-        f"| {redundant_rejections} redundant rejected",
-        stats={
-            "analyzed_frames": processed_frames,
-            "blurry_frames": blurry_count,
-            "exposure_rejected": exposure_rejected_count,
-            "redundant_frames": redundant_rejections,
-            "selected_frames": len(selected_frames),
-        },
-        selected_count=len(selected_frames),
-    )
+    if uniform_sampling:
+        logger.info(
+            "[frame_selection:uniform_sampling] Selected %d frames",
+            len(selected_frames),
+        )
+    else:
+        logger.info(
+            "[frame_selection:similarity] Similarity pass complete — %d selected, %d redundant rejections",
+            len(selected_frames), redundant_rejections,
+        )
+        _progress_callback(
+            progress_callback, 75,
+            f"[frame_selection:similarity] Similarity pass complete — {len(selected_frames)} frames selected "
+            f"| {redundant_rejections} redundant rejected",
+            stats={
+                "analyzed_frames": processed_frames,
+                "blurry_frames": blurry_count,
+                "exposure_rejected": exposure_rejected_count,
+                "redundant_frames": redundant_rejections,
+                "selected_frames": len(selected_frames),
+            },
+            selected_count=len(selected_frames),
+        )
 
     # ------------------------------------------------------------------ #
     # STAGE 5: Continuity enforcement & coverage gap filling              #
@@ -1329,7 +1339,12 @@ def select_frames(
         stage_timings=stage_timings,
     )
 
-    effective_min = min(cfg.min_final_selection, len(candidate_frames)) if candidate_frames else 0
+    if cfg.radical_uniform_sampling:
+        effective_min = 1
+    elif candidate_frames:
+        effective_min = min(cfg.min_final_selection, len(candidate_frames))
+    else:
+        effective_min = 0
     if valid_count == 0:
         raise RuntimeError("No valid images in COLMAP input directory after selection")
     if effective_min > 0 and valid_count < effective_min and write_failures:

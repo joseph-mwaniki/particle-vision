@@ -40,6 +40,7 @@ def _cfg(**overrides) -> SelectorConfig:
         max_rejected_preview=0,
         adaptive_blur=False,
         sampling_stride=1,
+        radical_uniform_sampling=False,
     )
     base.update(overrides)
     return SelectorConfig(**base)
@@ -229,6 +230,7 @@ def test_uniform_sampling_stride_indices(tmp_path):
         min_final_selection=1,
         max_rejected_preview=0,
         adaptive_blur=False,
+        radical_uniform_sampling=False,
     )
     result = select_frames(
         video,
@@ -438,6 +440,7 @@ def test_unrepairable_gaps_reported_honestly(tmp_path):
         max_frame_gap=2,
         min_final_selection=1,
         adaptive_blur=False,
+        radical_uniform_sampling=False,
     )
     result = select_frames(
         video,
@@ -461,6 +464,7 @@ def test_gap_statistics_and_chronological_ordering(tmp_path):
         max_frame_gap=25,
         min_final_selection=1,
         adaptive_blur=False,
+        radical_uniform_sampling=False,
     )
     result = select_frames(
         video,
@@ -488,6 +492,9 @@ def test_selector_config_compatibility():
     assert cfg.continuity_aware is True
     assert cfg.enforce_continuity is True
     assert cfg.conservative_redundancy is True
+    assert cfg.radical_uniform_sampling is True
+    assert cfg.radical_interval_seconds == 3.0
+    assert cfg.radical_start_seconds == 3.0
 
     # Test legacy from_dict with no new fields
     legacy = SelectorConfig.from_dict({"blur_threshold": 60.0})
@@ -513,6 +520,9 @@ def test_selector_config_compatibility():
     assert d["max_frame_gap"] == 25
     assert d["continuity_aware"] is True
     assert d["conservative_redundancy"] is True
+    assert d["radical_uniform_sampling"] is True
+    assert d["radical_interval_seconds"] == 3.0
+    assert d["radical_start_seconds"] == 3.0
 
 
 @pytest.mark.parametrize(
@@ -543,10 +553,18 @@ def test_uniform_sampling_modes_select_interval_without_safety_net(
         min_final_selection=8,
         max_rejected_preview=0,
         adaptive_blur=False,
-        **{
-            mode: True,
-            f"{mode.removesuffix('_uniform_sampling')}_interval_seconds": 0.5,
-        },
+        radical_uniform_sampling=False,
+    )
+    setattr(config, mode, True)
+    setattr(
+        config,
+        f"{mode.removesuffix('_uniform_sampling')}_interval_seconds",
+        0.5,
+    )
+    setattr(
+        config,
+        f"{mode.removesuffix('_uniform_sampling')}_start_seconds",
+        0.0,
     )
     result = select_frames(
         video,
@@ -599,6 +617,61 @@ def test_uniform_sampling_config_round_trip():
     assert restored.radical_start_seconds == 0.5
 
 
+def test_default_radical_sampling_uses_three_second_gap_without_fallback(
+    tmp_path, monkeypatch
+):
+    video = tmp_path / "radical_default.mp4"
+    _write_test_video(video, fps=10, seconds=8)
+    job_root = tmp_path / "radical_default"
+    progress_updates = []
+
+    def fail_if_called(*_args, **_kwargs):
+        raise AssertionError("Similarity logic should be bypassed")
+
+    monkeypatch.setattr(frame_selector, "prepare_similarity_frame", fail_if_called)
+    monkeypatch.setattr(frame_selector, "compute_similarity", fail_if_called)
+    monkeypatch.setattr(frame_selector, "evaluate_temporal_bridge", fail_if_called)
+    monkeypatch.setattr(frame_selector, "enforce_continuity", fail_if_called)
+    monkeypatch.setattr(frame_selector, "classify_blur", lambda *_args: "sharp")
+    monkeypatch.setattr(
+        frame_selector, "analyze_exposure", lambda *_args: (100.0, 0.0, 0.0, "good")
+    )
+
+    result = select_frames(
+        video,
+        config=SelectorConfig(
+            adaptive_blur=False,
+            sampling_stride=5,
+            min_final_selection=100,
+        ),
+        output_root=job_root / "frame_selection",
+        colmap_images_dir=job_root / "colmap" / "images",
+        progress_callback=lambda progress, message, updates: progress_updates.append(
+            (progress, message, updates)
+        ),
+    )
+
+    timestamps = [entry["timestamp"] for entry in result["selected_frames"]]
+    filenames = [entry["output_file"] for entry in result["selected_frames"]]
+    assert timestamps == [3.0, 6.0]
+    assert result["selected_count"] == 2
+    assert result["stats"]["selected_frames"] == 2
+    assert result["stats"]["safety_net_added_count"] == 0
+    assert result["stats"]["radical_uniform_sampling"] is True
+    assert filenames == [
+        f"{result['job_id'][:12]}_frame_000001.jpg",
+        f"{result['job_id'][:12]}_frame_000002.jpg",
+    ]
+    assert all(
+        (job_root / "colmap" / "images" / filename).is_file()
+        for filename in filenames
+    )
+    assert any(
+        message == "Applying radical 3.0s uniform downsampling"
+        for _, message, _ in progress_updates
+    )
+
+
 def test_redundancy_filtering_cannot_violate_maximum_gap(tmp_path):
     # A video where consecutive static frames might be deemed redundant, but
     # continuity enforcement ensures the final gap never exceeds max_frame_gap
@@ -618,6 +691,7 @@ def test_redundancy_filtering_cannot_violate_maximum_gap(tmp_path):
         continuity_aware=True,
         min_final_selection=1,
         adaptive_blur=False,
+        radical_uniform_sampling=False,
     )
     result = select_frames(
         video,
@@ -645,6 +719,7 @@ def test_short_video_and_few_frames_safety(tmp_path):
         max_frame_gap=25,
         min_final_selection=1,
         adaptive_blur=False,
+        radical_uniform_sampling=False,
     )
     result = select_frames(
         video,
@@ -671,6 +746,7 @@ def test_single_frame_continuity_reported_as_not_verifiable(tmp_path):
         max_frame_gap=25,
         min_final_selection=1,
         adaptive_blur=False,
+        radical_uniform_sampling=False,
     )
     result = select_frames(
         video,
@@ -700,6 +776,7 @@ def test_safety_net_added_tracked_separately(tmp_path):
         similarity_threshold=0.5,
         min_final_selection=5,
         adaptive_blur=False,
+        radical_uniform_sampling=False,
     )
     result = select_frames(
         video,

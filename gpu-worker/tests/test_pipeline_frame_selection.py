@@ -59,6 +59,7 @@ def test_extract_frames_uses_real_algorithm_not_ffmpeg(tmp_path, monkeypatch):
             min_final_selection=1,
             adaptive_blur=False,
             blur_threshold=50,
+            radical_uniform_sampling=False,
         ),
     )
 

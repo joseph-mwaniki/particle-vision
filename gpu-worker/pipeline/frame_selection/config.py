@@ -37,9 +37,9 @@ class SelectorConfig:
     experimental_uniform_sampling: bool = False
     experimental_interval_seconds: float = 1.0
     experimental_start_seconds: float = 0.0
-    radical_uniform_sampling: bool = False
-    radical_interval_seconds: float = 1.0
-    radical_start_seconds: float = 0.0
+    radical_uniform_sampling: bool = True
+    radical_interval_seconds: float = 3.0
+    radical_start_seconds: float = 3.0
 
     def __init__(
         self,
@@ -74,9 +74,9 @@ class SelectorConfig:
         experimental_uniform_sampling: bool = False,
         experimental_interval_seconds: float = 1.0,
         experimental_start_seconds: float = 0.0,
-        radical_uniform_sampling: bool = False,
-        radical_interval_seconds: float = 1.0,
-        radical_start_seconds: float = 0.0,
+        radical_uniform_sampling: bool = True,
+        radical_interval_seconds: float = 3.0,
+        radical_start_seconds: float = 3.0,
         **kwargs: Any,
     ):
         if "sample_stride" in kwargs:
