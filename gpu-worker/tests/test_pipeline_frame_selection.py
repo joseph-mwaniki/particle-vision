@@ -7,6 +7,7 @@ import cv2
 import numpy as np
 import pytest
 
+from pipeline import colmap as colmap_module
 from pipeline.colmap import run_colmap
 from pipeline.utils import extract_frames_from_video
 from pipeline.frame_selection.config import SelectorConfig
@@ -100,17 +101,24 @@ def test_extract_frames_fails_when_no_frames_selected(tmp_path, monkeypatch):
         extract_frames_from_video(video, tmp_path / "job")
 
 
-def test_colmap_reuses_validated_images_in_place(tmp_path, monkeypatch):
+def test_colmap_reuses_validated_images_in_place(tmp_path, monkeypatch, caplog):
+    caplog.set_level("INFO", logger="pipeline.colmap")
     images = tmp_path / "colmap" / "images"
     _write_valid_jpeg(images / "keep_000001.jpg")
     _write_valid_jpeg(images / "keep_000002.jpg")
     (images / "frames.json").write_text("{}")
 
     monkeypatch.setattr("pipeline.colmap.find_colmap_binary", lambda: "/usr/bin/colmap")
+    monkeypatch.setattr("pipeline.colmap.COLMAP_EXHAUSTIVE_MAX_FRAMES", 2)
     commands: list[list[str]] = []
 
     def fake_run(cmd, on_log=None):
         commands.append(cmd)
+        if (
+            cmd[1] == "exhaustive_matcher"
+            and cmd[cmd.index("--FeatureMatching.use_gpu") + 1] == "1"
+        ):
+            raise RuntimeError("simulated GPU matcher failure")
         sparse = tmp_path / "colmap" / "sparse" / "0"
         sparse.mkdir(parents=True, exist_ok=True)
         (sparse / "cameras.bin").write_bytes(b"ok")
@@ -122,13 +130,38 @@ def test_colmap_reuses_validated_images_in_place(tmp_path, monkeypatch):
     monkeypatch.setattr("pipeline.colmap.run_command", fake_run)
     monkeypatch.setattr("pipeline.colmap._wrap_xvfb_if_needed", lambda cmd: cmd)
 
-    result = run_colmap(images, tmp_path / "colmap")
+    logs: list[str] = []
+    result = run_colmap(images, tmp_path / "colmap", on_log=logs.append)
+    run_colmap(
+        images,
+        tmp_path / "colmap",
+        on_log=logs.append,
+        matcher_override="sequential",
+    )
     assert result / "images" == images
     names = sorted(p.name for p in (result / "images").iterdir() if p.suffix.lower() == ".jpg")
     assert names == ["keep_000001.jpg", "keep_000002.jpg"]
     image_path_args = [cmd[cmd.index("--image_path") + 1] for cmd in commands if "--image_path" in cmd]
     assert image_path_args
     assert all(Path(path).resolve() == images.resolve() for path in image_path_args)
+    matcher_cmds = [cmd for cmd in commands if cmd[1].endswith("_matcher")]
+    assert [cmd[1] for cmd in matcher_cmds] == [
+        "exhaustive_matcher",
+        "exhaustive_matcher",
+        "sequential_matcher",
+    ]
+    assert matcher_cmds[0][matcher_cmds[0].index("--database_path") + 1] == str(
+        tmp_path / "colmap" / "database.db"
+    )
+    assert matcher_cmds[1][matcher_cmds[1].index("--FeatureMatching.use_gpu") + 1] == "0"
+    assert matcher_cmds[2][matcher_cmds[2].index("--SequentialMatching.overlap") + 1] == "10"
+    assert any("Using exhaustive matching because input_frames=2" in line for line in logs)
+    assert "[COLMAP:init] Using matcher: exhaustive (input_frames=2)" in caplog.text
+
+
+def test_matcher_command_rejects_unknown_matcher(tmp_path):
+    with pytest.raises(RuntimeError, match="Unsupported COLMAP matcher: unknown"):
+        colmap_module._matcher_command("/usr/bin/colmap", tmp_path / "database.db", "unknown")
 
 
 def test_colmap_rejects_invalid_images(tmp_path, monkeypatch):

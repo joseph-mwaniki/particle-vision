@@ -29,6 +29,7 @@ COLMAP_QUALITY = os.getenv("COLMAP_QUALITY", "medium")
 COLMAP_BINARY = os.getenv("COLMAP_BINARY", "colmap")
 COLMAP_USE_GPU = os.getenv("COLMAP_USE_GPU", "1")
 COLMAP_MATCHER = os.getenv("COLMAP_MATCHER", "sequential")
+COLMAP_EXHAUSTIVE_MAX_FRAMES = int(os.getenv("COLMAP_EXHAUSTIVE_MAX_FRAMES", "200"))
 # Sequential matcher: compare each frame against this many neighbors on each side
 COLMAP_SEQUENTIAL_OVERLAP = int(os.getenv("COLMAP_SEQUENTIAL_OVERLAP", "10"))
 COLMAP_SEQUENTIAL_QUADRATIC_OVERLAP = os.getenv("COLMAP_SEQUENTIAL_QUADRATIC_OVERLAP", "1")

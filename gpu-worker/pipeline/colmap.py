@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from config import (
+    COLMAP_EXHAUSTIVE_MAX_FRAMES,
     COLMAP_MATCHER,
     COLMAP_QUALITY,
     COLMAP_SEQUENTIAL_OVERLAP,
@@ -34,8 +35,8 @@ def _colmap_quality() -> dict:
     return _QUALITY_PRESETS.get(COLMAP_QUALITY, _QUALITY_PRESETS["medium"])
 
 
-def _matcher_command(colmap_bin: str, database_path: Path) -> list[str]:
-    matcher = COLMAP_MATCHER.lower()
+def _matcher_command(colmap_bin: str, database_path: Path, matcher: str) -> list[str]:
+    matcher = matcher.lower()
     if matcher == "exhaustive":
         return [
             colmap_bin,
@@ -62,7 +63,7 @@ def _matcher_command(colmap_bin: str, database_path: Path) -> list[str]:
         ]
     if matcher == "vocab_tree":
         raise RuntimeError("vocab_tree requires a tree file and is not configured.")
-    raise RuntimeError(f"Unsupported COLMAP_MATCHER: {COLMAP_MATCHER}")
+    raise RuntimeError(f"Unsupported COLMAP matcher: {matcher}")
 
 
 def _wrap_xvfb_if_needed(cmd: list[str]) -> list[str]:
@@ -80,6 +81,7 @@ def run_colmap(
     zip_path: Optional[Path] = None,
     on_log: Optional[LogFn] = None,
     on_progress: Optional[ProgressFn] = None,
+    matcher_override: Optional[str] = None,
 ) -> Path:
     """
     Run COLMAP structure-from-motion on uploaded images.
@@ -140,6 +142,26 @@ def run_colmap(
             f"COLMAP input contains {len(validation['invalid'])} invalid image(s): "
             f"{validation['invalid'][:5]}"
         )
+
+    automatic_exhaustive = (
+        matcher_override is None and input_count <= COLMAP_EXHAUSTIVE_MAX_FRAMES
+    )
+    if matcher_override is not None:
+        matcher = matcher_override.lower()
+    elif automatic_exhaustive:
+        matcher = "exhaustive"
+        message = (
+            f"[COLMAP:init] Using exhaustive matching because input_frames={input_count} "
+            f"is at or below COLMAP_EXHAUSTIVE_MAX_FRAMES={COLMAP_EXHAUSTIVE_MAX_FRAMES}"
+        )
+        logger.info(message)
+        if on_log:
+            on_log(message)
+    else:
+        matcher = COLMAP_MATCHER.lower()
+    logger.info(
+        "[COLMAP:init] Using matcher: %s (input_frames=%d)", matcher, input_count
+    )
 
     abs_images = str(dataset_images.resolve())
     logger.info(
@@ -206,15 +228,18 @@ def run_colmap(
         else:
             raise
 
-    report("match_features", 20, f"Running {COLMAP_MATCHER} feature matching (GPU={COLMAP_USE_GPU})")
+    report("match_features", 20, f"Running {matcher} feature matching (GPU={COLMAP_USE_GPU})")
     try:
-        run_command(_wrap_xvfb_if_needed(_matcher_command(colmap_bin, database_path)), on_log=on_log)
+        run_command(
+            _wrap_xvfb_if_needed(_matcher_command(colmap_bin, database_path, matcher)),
+            on_log=on_log,
+        )
     except Exception as exc:
         if COLMAP_USE_GPU == "1":
             logger.warning("GPU feature matching failed (%s). Falling back to CPU matching.", exc)
             if on_log:
                 on_log(f"Warning: GPU matching failed ({exc}). Retrying on CPU...")
-            cpu_cmd = _matcher_command(colmap_bin, database_path)
+            cpu_cmd = _matcher_command(colmap_bin, database_path, matcher)
             cpu_cmd[cpu_cmd.index("--FeatureMatching.use_gpu") + 1] = "0"
             run_command(cpu_cmd, on_log=on_log)
         else:
